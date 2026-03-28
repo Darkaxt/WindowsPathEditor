@@ -40,18 +40,45 @@ namespace WindowsPathEditor
         }
 
         /// <summary>
+        /// Path used for file system access (handles WOW64 redirection for System32)
+        /// </summary>
+        public string ActualPathForAccess
+        {
+            get
+            {
+                var actual = ActualPath;
+                if (Environment.Is64BitOperatingSystem && !Environment.Is64BitProcess)
+                {
+                    var windowsDir = Environment.GetFolderPath(Environment.SpecialFolder.Windows).TrimEnd('\\');
+                    var system32 = Path.Combine(windowsDir, "System32");
+                    if (actual.StartsWith(system32, StringComparison.OrdinalIgnoreCase))
+                    {
+                        var tail = actual.Substring(system32.Length).TrimStart('\\');
+                        var sysnative = Path.Combine(Path.Combine(windowsDir, "Sysnative"), tail);
+                        if (Directory.Exists(sysnative))
+                        {
+                            return sysnative;
+                        }
+                    }
+                }
+
+                return actual;
+            }
+        }
+
+        /// <summary>
         /// Whether the given directory actually exists
         /// </summary>
         public bool Exists
         {
-            get { return Directory.Exists(ActualPath); }
+            get { return Directory.Exists(ActualPathForAccess); }
         }
 
         public IEnumerable<PathMatch> Find(string prefix)
         {
             try
             {
-                return Directory.EnumerateFiles(ActualPath, prefix + "*")
+                return Directory.EnumerateFiles(ActualPathForAccess, prefix + "*")
                     .Select(file => new PathMatch(ActualPath, Path.GetFileName(file)));
             } 
             catch (IOException)
