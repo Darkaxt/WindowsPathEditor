@@ -3,6 +3,8 @@ Microsoft Visual Studio Solution File, Format Version 11.00
 # Visual Studio 2010
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WindowsPathEditor", "WindowsPathEditor\WindowsPathEditor.csproj", "{27BB9DC6-B4E7-4600-98E1-9C855720DF69}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WindowsPathEditor.Tests", "WindowsPathEditor.Tests\WindowsPathEditor.Tests.csproj", "{3B0295AC-1EC8-490D-8B2B-8D569D5936C6}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x86 = Debug|x86
@@ -13,6 +15,10 @@ Global
 		{27BB9DC6-B4E7-4600-98E1-9C855720DF69}.Debug|x86.Build.0 = Debug|x86
 		{27BB9DC6-B4E7-4600-98E1-9C855720DF69}.Release|x86.ActiveCfg = Release|x86
 		{27BB9DC6-B4E7-4600-98E1-9C855720DF69}.Release|x86.Build.0 = Release|x86
+		{3B0295AC-1EC8-490D-8B2B-8D569D5936C6}.Debug|x86.ActiveCfg = Debug|x86
+		{3B0295AC-1EC8-490D-8B2B-8D569D5936C6}.Debug|x86.Build.0 = Debug|x86
+		{3B0295AC-1EC8-490D-8B2B-8D569D5936C6}.Release|x86.ActiveCfg = Release|x86
+		{3B0295AC-1EC8-490D-8B2B-8D569D5936C6}.Release|x86.Build.0 = Release|x86
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

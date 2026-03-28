@@ -1,19 +1,30 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
+using System;
 using System.Collections.Concurrent;
-using System.Threading;
-using System.Reactive.Linq;
-using System.Reactive.Concurrency;
-using System.IO;
-using System.Collections;
+using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
+using System.Linq;
+using System.Security;
+using System.Threading;
 
 namespace WindowsPathEditor
 {
     public class PathChecker : IDisposable
     {
+        private sealed class PathCheckRequest
+        {
+            public PathCheckRequest(int id, IEnumerable<AnnotatedPathEntry> entries, int systemPathCount)
+            {
+                Id = id;
+                Entries = entries.ToList();
+                SystemPathCount = systemPathCount;
+            }
+
+            public int Id { get; private set; }
+            public IList<AnnotatedPathEntry> Entries { get; private set; }
+            public int SystemPathCount { get; private set; }
+        }
+
         /// <summary>
         /// The single thread that will be used to schedule all disk lookups
         /// </summary>
@@ -22,12 +33,12 @@ namespace WindowsPathEditor
         /// <summary>
         /// The queue used to communicate with the background thread
         /// </summary>
-        private BlockingCollection<IEnumerable<AnnotatedPathEntry>> pathsToProcess = new BlockingCollection<IEnumerable<AnnotatedPathEntry>>(new ConcurrentQueue<IEnumerable<AnnotatedPathEntry>>());
-         
+        private BlockingCollection<PathCheckRequest> pathsToProcess = new BlockingCollection<PathCheckRequest>(new ConcurrentQueue<PathCheckRequest>());
+
         /// <summary>
         /// Cache for the listFiles operation
         /// </summary>
-        private ConcurrentDictionary<string, IEnumerable<string>> fileCache = new ConcurrentDictionary<string,IEnumerable<string>>();
+        private ConcurrentDictionary<string, IEnumerable<string>> fileCache = new ConcurrentDictionary<string, IEnumerable<string>>();
         private ConcurrentDictionary<string, Version> versionCache = new ConcurrentDictionary<string, Version>();
 
         /// <summary>
@@ -40,12 +51,15 @@ namespace WindowsPathEditor
         /// </summary>
         private readonly IEnumerable<string> extensions;
 
-        private bool running           = true;
+        private bool running = true;
         private bool abortCurrentCheck = false;
+        private volatile PathConflictReport latestConflictReport = PathConflictReport.Pending;
+        private int latestRequestedCheckId = 0;
+        private int latestCompletedCheckId = 0;
 
         public PathChecker(IEnumerable<string> extensions)
         {
-            this.extensions = extensions.Concat(new[]{ ".dll" }).Select(_ => _.ToLower());
+            this.extensions = extensions.Concat(new[] { ".dll" }).Select(_ => _.ToLower());
             thread = new Thread(CheckerLoop);
             thread.Start();
         }
@@ -53,11 +67,26 @@ namespace WindowsPathEditor
         /// <summary>
         /// Check all paths in the given set
         /// </summary>
-        public void Check(IEnumerable<AnnotatedPathEntry> paths)
+        public void Check(IEnumerable<AnnotatedPathEntry> paths, int systemPathCount)
         {
-            currentPath = paths.Select(_ => _.Path).ToList();
+            var snapshot = paths.ToList();
+            currentPath = snapshot.Select(_ => _.Path).ToList();
+            snapshot.Each(_ => _.BeginValidation());
             abortCurrentCheck = true;
-            pathsToProcess.Add(paths.ToList());
+            latestConflictReport = PathConflictReport.Pending;
+
+            var requestId = Interlocked.Increment(ref latestRequestedCheckId);
+            pathsToProcess.Add(new PathCheckRequest(requestId, snapshot, systemPathCount));
+        }
+
+        public PathConflictReport LatestConflictReport
+        {
+            get { return latestConflictReport; }
+        }
+
+        public bool IsCheckPending
+        {
+            get { return Interlocked.CompareExchange(ref latestCompletedCheckId, 0, 0) < Interlocked.CompareExchange(ref latestRequestedCheckId, 0, 0); }
         }
 
         /// <summary>
@@ -80,7 +109,7 @@ namespace WindowsPathEditor
                     continue;
                 }
 
-                foreach (var dll in listFiles(path.ActualPath)
+                foreach (var dll in ListFiles(path)
                     .Where(file => string.Equals(Path.GetExtension(file), ".dll", StringComparison.OrdinalIgnoreCase))
                     .Distinct(StringComparer.OrdinalIgnoreCase))
                 {
@@ -132,41 +161,53 @@ namespace WindowsPathEditor
         /// <summary>
         /// Method to do the actual checking (call from thread)
         /// </summary>
-        /// <param name="paths"></param>
-        private void DoCheck(IEnumerable<AnnotatedPathEntry> paths)
+        private void DoCheck(PathCheckRequest request)
         {
-            foreach (var path in paths)
-            {
-                if (abortCurrentCheck) return;
+            var pathList = request.Entries.ToList();
+            var report = PathConflictAnalyzer.BuildReport(pathList.Select(_ => _.Path), extensions, request.SystemPathCount);
+            if (!IsLatestRequest(request.Id) || abortCurrentCheck) return;
 
-                CheckPath(path);
+            latestConflictReport = report;
+
+            for (var i = 0; i < pathList.Count; i++)
+            {
+                if (!IsLatestRequest(request.Id) || abortCurrentCheck) return;
+
+                ApplyStatus(pathList[i], i, report, request.Id);
+            }
+
+            if (IsLatestRequest(request.Id))
+            {
+                Interlocked.Exchange(ref latestCompletedCheckId, request.Id);
             }
         }
 
-        private void CheckPath(AnnotatedPathEntry path)
+        private void ApplyStatus(AnnotatedPathEntry path, int index, PathConflictReport report, int requestId)
         {
-            path.ClearIssues();
-            path.SeriousError = false;
-            try
+            var validationIssues = new List<string>();
+            var seriousError = false;
+
+            PathResolution resolution;
+            if (!path.Path.TryResolve(out resolution))
             {
-                if (!path.Path.Exists)
-                {
-                    path.AddIssue("Does not exist");
-                    path.SeriousError = true;
-                    return;
-                }
-    
-                listFiles(path.Path.ActualPath)
-                    .Select(file => new { file=file, hit=FirstDir(file)})
-                    .Where(fh => fh.hit.Directory.ToLower() != path.Path.ActualPath.ToLower())
-                    .Each(fh => AddIssueIfNeeded(path, fh.file, fh.hit));
+                validationIssues.Add("Path could not be resolved: " + resolution.ErrorMessage);
+                seriousError = true;
             }
-            catch (Exception ex)
+            else if (!Directory.Exists(resolution.ActualPathForAccess))
             {
-                Debug.Print("Error checking path: {0}", ex);
-                path.SeriousError = true;
-                path.AddIssue(string.Format("Error checking this path: {0}", ex.Message));
+                validationIssues.Add("Does not exist");
+                seriousError = true;
             }
+
+            IList<string> conflictingFiles;
+            if (!report.ConflictFilesByPathIndex.TryGetValue(index, out conflictingFiles))
+            {
+                conflictingFiles = new List<string>();
+            }
+
+            if (!IsLatestRequest(requestId) || abortCurrentCheck) return;
+
+            path.SetStatus(validationIssues, seriousError, conflictingFiles);
         }
 
         /// <summary>
@@ -174,9 +215,9 @@ namespace WindowsPathEditor
         /// </summary>
         private void CheckerLoop()
         {
-            while (running) 
+            while (running)
             {
-                IEnumerable<AnnotatedPathEntry> subject = pathsToProcess.Take();
+                var subject = pathsToProcess.Take();
                 if (subject != null)
                 {
                     abortCurrentCheck = false;
@@ -212,13 +253,18 @@ namespace WindowsPathEditor
             return xs;
         }
 
-
         /// <summary>
         /// List all files in a directory, returning them from cache if available to speed up subsequent searches
         /// </summary>
-        private IEnumerable<string> listFiles(string path)
+        private IEnumerable<string> ListFiles(PathEntry path)
         {
-            var pathForAccess = ResolvePathForAccess(path);
+            PathResolution resolution;
+            if (!path.TryResolve(out resolution))
+            {
+                yield break;
+            }
+
+            var pathForAccess = resolution.ActualPathForAccess;
 
             IEnumerable<string> fromCache;
             if (fileCache.TryGetValue(pathForAccess, out fromCache))
@@ -227,89 +273,42 @@ namespace WindowsPathEditor
                 yield break;
             }
 
-            var files = new List<string>();
-            foreach (var f in Directory.EnumerateFiles(pathForAccess)
-                .Where(_ => extensions.Contains(Path.GetExtension(_).ToLower()))
-                .Select(Path.GetFileName))
+            List<string> enumeratedFiles;
+            try
             {
-                files.Add(f);
-                yield return f;
+                enumeratedFiles = Directory.EnumerateFiles(pathForAccess)
+                    .Where(_ => extensions.Contains(Path.GetExtension(_).ToLower()))
+                    .Select(Path.GetFileName)
+                    .ToList();
+            }
+            catch (Exception ex) when (
+                ex is IOException ||
+                ex is UnauthorizedAccessException ||
+                ex is SecurityException ||
+                ex is PathTooLongException ||
+                ex is ArgumentException ||
+                ex is NotSupportedException)
+            {
+                Debug.Print("Error enumerating files for {0}: {1}", path.SymbolicPath, ex.Message);
+                yield break;
             }
 
-            fileCache[pathForAccess] = files;
-        }
-
-        private static string ResolvePathForAccess(string path)
-        {
-            if (Environment.Is64BitOperatingSystem && !Environment.Is64BitProcess)
+            fileCache[pathForAccess] = enumeratedFiles;
+            foreach (var file in enumeratedFiles)
             {
-                var windowsDir = Environment.GetFolderPath(Environment.SpecialFolder.Windows).TrimEnd('\\');
-                var system32 = Path.Combine(windowsDir, "System32");
-                if (path.StartsWith(system32, StringComparison.OrdinalIgnoreCase))
-                {
-                    var tail = path.Substring(system32.Length).TrimStart('\\');
-                    var sysnative = Path.Combine(Path.Combine(windowsDir, "Sysnative"), tail);
-                    if (Directory.Exists(sysnative))
-                    {
-                        return sysnative;
-                    }
-                }
+                yield return file;
             }
-
-            return path;
-        }
-
-        /// <summary>
-        /// Find the file on the given paths and return the first match
-        /// </summary>
-        private PathMatch FirstDir(string filename)
-        {
-            return currentPath
-                .Where(path => File.Exists(Path.Combine(path.ActualPathForAccess, filename)))
-                .Select(path => new PathMatch(path.ActualPath, filename))
-                .FirstOrDefault() ?? new PathMatch("", "");
-        }
-
-        private void AddIssueIfNeeded(AnnotatedPathEntry path, string filename, PathMatch firstHit)
-        {
-            if (!string.Equals(Path.GetExtension(filename), ".dll", StringComparison.OrdinalIgnoreCase))
-            {
-                path.AddIssue(string.Format("{0} shadowed by {1}", filename, firstHit.FullPath));
-                return;
-            }
-
-            var candidatePaths = currentPath
-                .Where(entry => File.Exists(Path.Combine(entry.ActualPathForAccess, filename)))
-                .ToList();
-
-            if (candidatePaths.Count <= 1)
-            {
-                return;
-            }
-
-            var winningPath = candidatePaths
-                .Select(entry => new { Entry = entry, Version = GetFileVersion(entry, filename) })
-                .OrderByDescending(_ => _.Version)
-                .ThenBy(_ => candidatePaths.IndexOf(_.Entry))
-                .First();
-
-            var firstPath = candidatePaths.First();
-            if (firstPath.Equals(winningPath.Entry))
-            {
-                return;
-            }
-
-            path.AddIssue(string.Format(
-                "{0} v{1} shadowed by {2} (v{3})",
-                filename,
-                FormatVersion(winningPath.Version),
-                firstHit.FullPath,
-                FormatVersion(GetFileVersion(firstPath, filename))));
         }
 
         private Version GetFileVersion(PathEntry path, string filename)
         {
-            var fullPath = Path.Combine(path.ActualPathForAccess, filename);
+            PathResolution resolution;
+            if (!path.TryResolve(out resolution))
+            {
+                return new Version(0, 0, 0, 0);
+            }
+
+            var fullPath = Path.Combine(resolution.ActualPathForAccess, filename);
             return versionCache.GetOrAdd(fullPath, _ =>
             {
                 try
@@ -328,17 +327,16 @@ namespace WindowsPathEditor
             });
         }
 
-        private static string FormatVersion(Version version)
-        {
-            return version == null ? "0.0.0.0" : version.ToString();
-        }
-
         public void Dispose()
         {
             running = false;
             pathsToProcess.Add(null);
             thread.Join();
         }
-    }
 
+        private bool IsLatestRequest(int requestId)
+        {
+            return requestId == Interlocked.CompareExchange(ref latestRequestedCheckId, 0, 0);
+        }
+    }
 }

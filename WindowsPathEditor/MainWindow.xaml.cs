@@ -115,6 +115,7 @@ namespace WindowsPathEditor
         private void DirtyPaths()
         {
             pathsDirty = true;
+            CompletePath.Each(_ => _.BeginValidation());
             InvalidateDependentProperties();
             Dispatcher.BeginInvoke((Action)RecheckPath);
         }
@@ -124,7 +125,7 @@ namespace WindowsPathEditor
             if (pathsDirty)
             {
                 pathsDirty = false;
-                checker.Check(CompletePath);
+                checker.Check(CompletePath, SystemPath.Count);
             }
         }
 
@@ -133,6 +134,23 @@ namespace WindowsPathEditor
             string args = "";
             if (SystemPathChanged) args += "/system " + PathAsCommandLineArgument(SystemPath);
             if (UserPathChanged) args += " /user " + PathAsCommandLineArgument(UserPath);
+
+            try
+            {
+                PathBackupExporter.WriteBackup(
+                    reg.SystemPath.ToList(),
+                    reg.UserPath.ToList(),
+                    DateTime.Now);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(
+                    "The PATH backup could not be created, so the changes were not saved.\n\n" + ex.Message,
+                    "Backup Failed",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+                return;
+            }
 
             if (!UAC.Relaunch(args, NeedsElevation))
                 MessageBox.Show("The changes were NOT saved!", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
@@ -218,12 +236,12 @@ namespace WindowsPathEditor
         /// </summary>
         private bool PathListEqual(IEnumerable<PathEntry> original, ObservableCollectionEx<AnnotatedPathEntry> edited)
         {
-            return original.Count() == edited.Count() && original.Zip(edited, (a, b) => a.SymbolicPath == b.SymbolicPath).All(_ => _);
+            return PathListEqual(original, edited.Select(_ => _.Path));
         }
 
         private static bool PathListEqual(IEnumerable<PathEntry> left, IEnumerable<PathEntry> right)
         {
-            return left.Count() == right.Count() && left.Zip(right, (a, b) => a.SymbolicPath == b.SymbolicPath).All(_ => _);
+            return left.SequenceEqual(right, PathEntryComparers.SymbolicPath);
         }
 
         /// <summary>
@@ -233,14 +251,8 @@ namespace WindowsPathEditor
         {
             lock (stateLock)
             {
-                var sp = SystemPath.Select(_ => _.Path);
-                var up = UserPath.Select(_ => _.Path);
-                var cp = sp.Concat(up);
-
-                var s = sp.Where((p, index) => p.Exists && !sp.Take(index).Contains(p));
-                var u = up.Where((p, index) => p.Exists && !cp.Take(sp.Count() + index).Contains(p));
-
-                SetPaths(s, u);
+                var cleaned = PathCleanup.Clean(SystemPath.Select(_ => _.Path), UserPath.Select(_ => _.Path));
+                SetPaths(cleaned.SystemPath, cleaned.UserPath);
             }
         }
 
@@ -278,7 +290,9 @@ namespace WindowsPathEditor
 
         private void DoExplore(object sender, ExecutedRoutedEventArgs e)
         {
-            Process.Start("explorer.exe", "/e," + GetSelectedEntry(e).Path.ActualPath);
+            PathResolution resolution;
+            if (!GetSelectedEntry(e).Path.TryResolve(out resolution)) return;
+            Process.Start("explorer.exe", "/e," + resolution.ActualPath);
         }
 
         private void CanExplore(object sender, CanExecuteRoutedEventArgs e)
@@ -286,7 +300,9 @@ namespace WindowsPathEditor
             e.CanExecute = false;
             try
             {
-                e.CanExecute = GetSelectedEntry(e) != null && Directory.Exists(GetSelectedEntry(e).Path.ActualPath);
+                var selected = GetSelectedEntry(e);
+                PathResolution resolution;
+                e.CanExecute = selected != null && selected.Path.TryResolve(out resolution) && Directory.Exists(resolution.ActualPathForAccess);
             }
             catch (Exception ex)
             {
@@ -327,8 +343,8 @@ namespace WindowsPathEditor
                 var window = new DiffWindow();
                 List<PathEntry> newPaths = new List<PathEntry>(SystemPath.Concat(UserPath).Select(_ => _.Path));
                 List<PathEntry> oldPaths = new List<PathEntry>(reg.SystemPath.Concat(reg.UserPath));
-                foreach (var x in new ObservableCollection<DiffPath>(newPaths.Except(oldPaths).Select(p => new DiffPath(p, true)).Concat(
-                                oldPaths.Except(newPaths).Select(p => new DiffPath(p, false)))))
+                foreach (var x in new ObservableCollection<DiffPath>(newPaths.Except(oldPaths, PathEntryComparers.SymbolicPath).Select(p => new DiffPath(p, true)).Concat(
+                                oldPaths.Except(newPaths, PathEntryComparers.SymbolicPath).Select(p => new DiffPath(p, false)))))
                 {
                     window.Changes.Add(x);
                 }
@@ -356,9 +372,7 @@ namespace WindowsPathEditor
             if (window.ShowDialog() == true)
             {
                 UserPath.SupressNotification = true;
-                search.Result
-                    .Select(PathEntry.FromFilePath)
-                    .Where(path => !currentPaths.Contains(path))
+                ScanImportPlanner.SelectPathsToImport(window.Paths, currentPaths)
                     .Each(path => UserPath.Add(new AnnotatedPathEntry(path)));
                 UserPath.SupressNotification = false;
             }
@@ -405,9 +419,32 @@ namespace WindowsPathEditor
             }
         }
 
-        private void ShowIssues_Checked(object sender, RoutedEventArgs e)
+        private void Conflicts_Click(object sender, RoutedEventArgs e)
         {
+            var report = checker.LatestConflictReport;
+            if (report.IsPending)
+            {
+                MessageBox.Show(
+                    "Conflict analysis is still running. Please try again in a moment.",
+                    "Conflicts",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+                return;
+            }
 
+            if (!report.HasConflicts)
+            {
+                MessageBox.Show(
+                    "No conflicting DLL or EXE files were detected.",
+                    "Conflicts",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+                return;
+            }
+
+            var window = new ConflictWindow();
+            window.Report = report;
+            window.ShowDialog();
         }
 
         private void Button_Click(object sender, RoutedEventArgs e)

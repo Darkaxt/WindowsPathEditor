@@ -1,19 +1,20 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.ComponentModel;
-using System.IO;
+using System;
 using System.Collections;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Security;
 using System.Text.RegularExpressions;
 
 namespace WindowsPathEditor
 {
     public class PathEntry
     {
+        private static IEnumerable<KeyValuePair<string, string>> environment;
+
         public PathEntry(string symbolicPath)
         {
-            SymbolicPath = symbolicPath
+            SymbolicPath = (symbolicPath ?? "")
                 .Replace('/', '\\');
 
             var invalidChars = new Regex("[" + Regex.Escape(string.Join("", Path.GetInvalidPathChars())) + "]");
@@ -34,9 +35,13 @@ namespace WindowsPathEditor
         /// <summary>
         /// The actual path
         /// </summary>
-        public string ActualPath 
+        public string ActualPath
         {
-            get { return Path.GetFullPath(Environment.ExpandEnvironmentVariables(SymbolicPath)).TrimEnd('\\'); }
+            get
+            {
+                PathResolution resolution;
+                return TryResolve(out resolution) ? resolution.ActualPath : SymbolicPath;
+            }
         }
 
         /// <summary>
@@ -46,23 +51,8 @@ namespace WindowsPathEditor
         {
             get
             {
-                var actual = ActualPath;
-                if (Environment.Is64BitOperatingSystem && !Environment.Is64BitProcess)
-                {
-                    var windowsDir = Environment.GetFolderPath(Environment.SpecialFolder.Windows).TrimEnd('\\');
-                    var system32 = Path.Combine(windowsDir, "System32");
-                    if (actual.StartsWith(system32, StringComparison.OrdinalIgnoreCase))
-                    {
-                        var tail = actual.Substring(system32.Length).TrimStart('\\');
-                        var sysnative = Path.Combine(Path.Combine(windowsDir, "Sysnative"), tail);
-                        if (Directory.Exists(sysnative))
-                        {
-                            return sysnative;
-                        }
-                    }
-                }
-
-                return actual;
+                PathResolution resolution;
+                return TryResolve(out resolution) ? resolution.ActualPathForAccess : SymbolicPath;
             }
         }
 
@@ -71,24 +61,59 @@ namespace WindowsPathEditor
         /// </summary>
         public bool Exists
         {
-            get { return Directory.Exists(ActualPathForAccess); }
+            get
+            {
+                PathResolution resolution;
+                return TryResolve(out resolution) && Directory.Exists(resolution.ActualPathForAccess);
+            }
         }
 
         public IEnumerable<PathMatch> Find(string prefix)
         {
+            PathResolution resolution;
+            if (!TryResolve(out resolution)) return Enumerable.Empty<PathMatch>();
+
             try
             {
-                return Directory.EnumerateFiles(ActualPathForAccess, prefix + "*")
-                    .Select(file => new PathMatch(ActualPath, Path.GetFileName(file)));
-            } 
+                return Directory.EnumerateFiles(resolution.ActualPathForAccess, prefix + "*")
+                    .Select(file => new PathMatch(resolution.ActualPath, Path.GetFileName(file)));
+            }
             catch (IOException)
             {
                 return Enumerable.Empty<PathMatch>();
-            } 
-            catch(ArgumentException)
+            }
+            catch (ArgumentException)
             {
                 return Enumerable.Empty<PathMatch>();
             }
+            catch (NotSupportedException)
+            {
+                return Enumerable.Empty<PathMatch>();
+            }
+        }
+
+        public PathResolution Resolve()
+        {
+            try
+            {
+                var expandedPath = Environment.ExpandEnvironmentVariables(SymbolicPath);
+                var actualPath = TrimTrailingBackslashes(Path.GetFullPath(expandedPath));
+                return PathResolution.Resolved(actualPath, ResolvePathForAccess(actualPath));
+            }
+            catch (Exception ex) when (
+                ex is ArgumentException ||
+                ex is NotSupportedException ||
+                ex is PathTooLongException ||
+                ex is SecurityException)
+            {
+                return PathResolution.Unresolved(ex.Message);
+            }
+        }
+
+        public bool TryResolve(out PathResolution resolution)
+        {
+            resolution = Resolve();
+            return resolution.IsResolved;
         }
 
         public override string ToString()
@@ -99,15 +124,13 @@ namespace WindowsPathEditor
         public override bool Equals(object obj)
         {
             if (!(obj is PathEntry)) return false;
-            return ((PathEntry)obj).ActualPath.ToLower() == ActualPath.ToLower();
+            return string.Equals(GetComparisonKey(), ((PathEntry)obj).GetComparisonKey(), StringComparison.OrdinalIgnoreCase);
         }
 
         public override int GetHashCode()
         {
-            return ActualPath.ToLower().GetHashCode();
+            return StringComparer.OrdinalIgnoreCase.GetHashCode(GetComparisonKey());
         }
-
-        private static IEnumerable<DictionaryEntry> environment;
 
         /// <summary>
         /// Try to find an environment variable that matches part of the path and
@@ -122,29 +145,87 @@ namespace WindowsPathEditor
         {
             if (environment == null)
             {
-                environment = GetEnvironment()
-                    .Where(entry => ((string)entry.Value).Length > 3)
-                    .OrderBy(entry => -((string)entry.Value).Length).ToList();
+                environment = GetEnvironment().ToList();
             }
 
-            foreach (var e in environment)
+            return FromFilePath(path, environment);
+        }
+
+        public static PathEntry FromFilePath(string path, IEnumerable<KeyValuePair<string, string>> environmentVariables)
+        {
+            foreach (var entry in OrderEnvironment(environmentVariables))
             {
-                var value = (string)e.Value;
-                if (value != "" && Directory.Exists(value) && path.StartsWith(value))
+                if (entry.Value != "" && Directory.Exists(entry.Value) && path.StartsWith(entry.Value, StringComparison.OrdinalIgnoreCase))
                 {
-                    return new PathEntry("%" + e.Key + "%" + path.Substring(value.Length));
+                    return new PathEntry("%" + entry.Key + "%" + path.Substring(entry.Value.Length));
                 }
             }
+
             return new PathEntry(path);
         }
 
-        private static IEnumerable<DictionaryEntry> GetEnvironment()
+        internal static string ResolvePathForAccess(string actualPath)
         {
-            var ls = new List<DictionaryEntry>();
-            foreach (var entry in Environment.GetEnvironmentVariables())
-                ls.Add((DictionaryEntry)entry);
-            return ls;
+            if (Environment.Is64BitOperatingSystem && !Environment.Is64BitProcess)
+            {
+                var windowsDir = Environment.GetFolderPath(Environment.SpecialFolder.Windows).TrimEnd('\\');
+                var system32 = Path.Combine(windowsDir, "System32");
+                if (actualPath.StartsWith(system32, StringComparison.OrdinalIgnoreCase))
+                {
+                    var tail = actualPath.Substring(system32.Length).TrimStart('\\');
+                    var sysnative = Path.Combine(Path.Combine(windowsDir, "Sysnative"), tail);
+                    if (Directory.Exists(sysnative))
+                    {
+                        return sysnative;
+                    }
+                }
+            }
+
+            return actualPath;
         }
 
+        private string GetComparisonKey()
+        {
+            PathResolution resolution;
+            if (TryResolve(out resolution))
+            {
+                return "R:" + resolution.ActualPath;
+            }
+
+            return "S:" + SymbolicPath;
+        }
+
+        private static IEnumerable<KeyValuePair<string, string>> OrderEnvironment(IEnumerable<KeyValuePair<string, string>> environmentVariables)
+        {
+            return environmentVariables
+                .Where(entry => !string.IsNullOrEmpty(entry.Value) && entry.Value.Length > 3)
+                .OrderByDescending(entry => entry.Value.Length)
+                .ThenByDescending(entry => entry.Key.Length)
+                .ThenBy(entry => entry.Key, StringComparer.OrdinalIgnoreCase);
+        }
+
+        private static IEnumerable<KeyValuePair<string, string>> GetEnvironment()
+        {
+            var environmentVariables = new List<KeyValuePair<string, string>>();
+            foreach (DictionaryEntry entry in Environment.GetEnvironmentVariables())
+            {
+                environmentVariables.Add(new KeyValuePair<string, string>((string)entry.Key, (string)entry.Value));
+            }
+
+            return environmentVariables;
+        }
+
+        private static string TrimTrailingBackslashes(string path)
+        {
+            if (string.IsNullOrEmpty(path)) return path;
+
+            var root = Path.GetPathRoot(path);
+            if (string.Equals(root, path, StringComparison.OrdinalIgnoreCase))
+            {
+                return path;
+            }
+
+            return path.TrimEnd('\\');
+        }
     }
 }

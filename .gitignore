@@ -4,3 +4,7 @@ Release
 *.suo
 *.sdf
 packages
+superpowers
+.claude/
+obj/
+bin/

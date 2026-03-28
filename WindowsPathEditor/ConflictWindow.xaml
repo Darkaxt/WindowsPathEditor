@@ -1,0 +1,126 @@
+<Window x:Class="WindowsPathEditor.ConflictWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Conflicts" Height="620" Width="1220"
+        DataContext="{Binding RelativeSource={RelativeSource Self}}"
+        Background="{StaticResource WindowBackgroundBrush}"
+        WindowStartupLocation="CenterScreen"
+        Icon="/WindowsPathEditor;component/Resources/view_text.ico">
+    <Grid Margin="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <TextBlock Grid.Row="0"
+                   Margin="0,0,0,10"
+                   Text="Conflicting DLL and EXE files grouped by the exact PATH entries that share them."
+                   Foreground="{StaticResource TextSecondaryBrush}"
+                   TextWrapping="Wrap" />
+
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="320" />
+                <ColumnDefinition Width="12" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <Border Grid.Column="0"
+                    Background="{StaticResource PanelBackgroundBrush}"
+                    BorderBrush="{StaticResource BorderBrush}"
+                    BorderThickness="1"
+                    Padding="0">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <Border Grid.Row="0"
+                            BorderBrush="{StaticResource BorderBrush}"
+                            BorderThickness="0,0,0,1">
+                        <TextBlock Margin="12,10,12,10"
+                                   FontWeight="SemiBold"
+                                   Text="{Binding GroupSummary}" />
+                    </Border>
+
+                    <ListBox Grid.Row="1"
+                             BorderThickness="0"
+                             ItemsSource="{Binding Report.Groups}"
+                             SelectedItem="{Binding SelectedGroup, Mode=TwoWay}">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel Margin="4,6">
+                                    <TextBlock Text="{Binding Title}"
+                                               FontWeight="SemiBold"
+                                               TextWrapping="Wrap" />
+                                    <TextBlock Text="{Binding ParticipantSummary}"
+                                               Foreground="{StaticResource TextSecondaryBrush}"
+                                               FontSize="{StaticResource FontSizeSmall}"
+                                               TextWrapping="Wrap"
+                                               Margin="0,3,0,0" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </Grid>
+            </Border>
+
+            <Border Grid.Column="2"
+                    Background="{StaticResource PanelBackgroundBrush}"
+                    BorderBrush="{StaticResource BorderBrush}"
+                    BorderThickness="1"
+                    Padding="12">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <TextBlock Grid.Row="0"
+                               Text="{Binding SelectedGroup.Title}"
+                               FontWeight="SemiBold"
+                               FontSize="{StaticResource FontSizeTitle}" />
+
+                    <TextBlock Grid.Row="1"
+                               Margin="0,4,0,10"
+                               Text="{Binding SelectedGroup.ParticipantSummary}"
+                               Foreground="{StaticResource TextSecondaryBrush}"
+                               TextWrapping="Wrap" />
+
+                    <!-- Empty state — shown only when no group is selected -->
+                    <TextBlock Grid.Row="2"
+                               x:Name="noGroupPlaceholder"
+                               Text="Select a conflict group on the left to inspect its files."
+                               Foreground="{StaticResource TextSecondaryBrush}"
+                               HorizontalAlignment="Center"
+                               VerticalAlignment="Center"
+                               Visibility="Collapsed" />
+
+                    <DataGrid Grid.Row="2"
+                              x:Name="groupGrid"
+                              AutoGenerateColumns="False"
+                              CanUserAddRows="False"
+                              CanUserDeleteRows="False"
+                              CanUserResizeRows="False"
+                              EnableColumnVirtualization="True"
+                              EnableRowVirtualization="True"
+                              HeadersVisibility="All"
+                              IsReadOnly="True"
+                              ItemsSource="{Binding SelectedGroup.Rows}"
+                              Margin="0" />
+                </Grid>
+            </Border>
+        </Grid>
+
+        <Button Grid.Row="2"
+                Content="Close"
+                IsDefault="True"
+                HorizontalAlignment="Right"
+                Width="90"
+                Margin="0,10,0,0"
+                Click="Close_Click" />
+    </Grid>
+</Window>

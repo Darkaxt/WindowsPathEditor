@@ -31,11 +31,20 @@ namespace WindowsPathEditor
         public IEnumerable<string> Run()
         {
             progressSink.Begin();
-
-            Search(root, 0);
-
-            progressSink.Done();
-            return result;
+            try
+            {
+                Search(root, 0);
+                return result;
+            }
+            catch (Exception ex)
+            {
+                Debug.Print("Error while scanning for bin directories: {0}", ex);
+                return result;
+            }
+            finally
+            {
+                progressSink.Done();
+            }
         }
 
         private void Search(String dir, int level)
@@ -43,7 +52,7 @@ namespace WindowsPathEditor
             progressSink.ReportProgress(dir);
             if (progressSink.Cancelled) return;
 
-            if (Path.GetFileName(dir).ToLower() == "bin")
+            if (string.Equals(Path.GetFileName(dir), "bin", StringComparison.OrdinalIgnoreCase))
             {
                 progressSink.FoundCandidate(dir);
                 result.Add(dir);
@@ -51,7 +60,7 @@ namespace WindowsPathEditor
             }
 
             // Skip the Windows directory. It's huge and the chance of bounty is small.
-            if (Path.GetFullPath(dir).ToLower() == Environment.GetEnvironmentVariable("windir").ToLower())
+            if (string.Equals(Path.GetFullPath(dir), Environment.GetEnvironmentVariable("windir"), StringComparison.OrdinalIgnoreCase))
                 return;
 
             // If this is not a 'bin' directory, search its children
@@ -66,6 +75,12 @@ namespace WindowsPathEditor
                 } catch (SecurityException) {
                     // Ignore
                 } catch (UnauthorizedAccessException) {
+                    // Ignore
+                } catch (IOException) {
+                    // Ignore
+                } catch (ArgumentException) {
+                    // Ignore
+                } catch (NotSupportedException) {
                     // Ignore
                 }
             }

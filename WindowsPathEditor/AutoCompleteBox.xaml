@@ -1,42 +1,61 @@
-﻿<UserControl x:Class="WindowsPathEditor.AutoCompleteBox"
+<UserControl x:Class="WindowsPathEditor.AutoCompleteBox"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" 
-             xmlns:d="http://schemas.microsoft.com/expression/blend/2008" 
-             mc:Ignorable="d" 
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             mc:Ignorable="d"
              d:DesignHeight="300" d:DesignWidth="300">
     <Grid x:Name="root">
-        <TextBox HorizontalAlignment="Stretch" Name="textBox" KeyUp="textBox_KeyUp"></TextBox>
-        <Popup 
-              Name="popup"
-              Placement="Bottom" 
-              PlacementTarget="{Binding ElementName=textBox}"
-              AllowsTransparency="true" 
-              IsOpen="False"  
-              Width="{Binding ElementName=textBox,Path=ActualWidth}"
-              StaysOpen="{Binding ElementName=textBox,Path=IsKeyboardFocused}">
-            <ListBox x:Name="suggestionList" 
-              VerticalContentAlignment="Stretch" 
-              HorizontalContentAlignment="Stretch"
-              MaxHeight="200"
-              KeyboardNavigation.DirectionalNavigation="Contained">
-                <ListBox.Resources>
-                    <Style TargetType="ListBoxItem">
-                    <Style.Resources>
-                        <!-- SelectedItem with focus -->
-                        <SolidColorBrush x:Key="{x:Static SystemColors.HighlightBrushKey}"
-                       Color="Transparent" />
-                        <!-- SelectedItem without focus -->
-                        <SolidColorBrush x:Key="{x:Static SystemColors.ControlBrushKey}"
-                       Color="Transparent" />
-                        <!-- SelectedItem text foreground -->
-                        <SolidColorBrush x:Key="{x:Static SystemColors.HighlightTextBrushKey}"
-                       Color="Black" />
-                    </Style.Resources>
-                    <Setter Property="FocusVisualStyle" Value="{x:Null}" />
-                </Style>
-                </ListBox.Resources>
-            </ListBox>
+        <TextBox HorizontalAlignment="Stretch" Name="textBox" KeyUp="textBox_KeyUp" />
+        <Popup Name="popup"
+               Placement="Bottom"
+               PlacementTarget="{Binding ElementName=textBox}"
+               AllowsTransparency="True"
+               IsOpen="False"
+               Width="{Binding ElementName=textBox, Path=ActualWidth}"
+               StaysOpen="{Binding ElementName=textBox, Path=IsKeyboardFocused}">
+            <Border Background="{StaticResource PanelBackgroundBrush}"
+                    BorderBrush="{StaticResource BorderFocusBrush}"
+                    BorderThickness="1">
+                <ListBox x:Name="suggestionList"
+                         VerticalContentAlignment="Stretch"
+                         HorizontalContentAlignment="Stretch"
+                         MaxHeight="200"
+                         BorderThickness="0"
+                         KeyboardNavigation.DirectionalNavigation="Contained">
+                    <ListBox.Resources>
+                        <!-- Override the default ListBoxItem highlight so the popup
+                             uses a subtle blue tint rather than the system's blue box -->
+                        <Style TargetType="ListBoxItem">
+                            <Setter Property="Padding"          Value="6,3" />
+                            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+                            <Setter Property="FontFamily"       Value="{StaticResource UIFont}" />
+                            <Setter Property="FontSize"         Value="{StaticResource FontSizeNormal}" />
+                            <Setter Property="Template">
+                                <Setter.Value>
+                                    <ControlTemplate TargetType="ListBoxItem">
+                                        <Border x:Name="bd"
+                                                Background="{TemplateBinding Background}"
+                                                Padding="{TemplateBinding Padding}">
+                                            <ContentPresenter />
+                                        </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter TargetName="bd" Property="Background"
+                                                        Value="{StaticResource ListHoverBrush}" />
+                                            </Trigger>
+                                            <Trigger Property="IsSelected" Value="True">
+                                                <Setter TargetName="bd" Property="Background"
+                                                        Value="{StaticResource ListSelectionBrush}" />
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </Setter.Value>
+                            </Setter>
+                        </Style>
+                    </ListBox.Resources>
+                </ListBox>
+            </Border>
         </Popup>
     </Grid>
 </UserControl>

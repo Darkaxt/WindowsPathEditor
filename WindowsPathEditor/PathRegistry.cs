@@ -43,8 +43,9 @@ namespace WindowsPathEditor
         public IEnumerable<String> ExecutableExtensions
         {
             get {
-                return ReadMultipleFromRegistry(Registry.LocalMachine, SystemEnvironmentKey, "PathExt").Concat(
-                    ReadMultipleFromRegistry(Registry.CurrentUser, SystemEnvironmentKey, "PathExt"));
+                return MergeExecutableExtensions(
+                    ReadMultipleFromRegistry(Registry.LocalMachine, SystemEnvironmentKey, "PathExt"),
+                    ReadMultipleFromRegistry(Registry.CurrentUser, UserEnvironmentKey, "PathExt"));
             }
         }
 
@@ -91,6 +92,23 @@ namespace WindowsPathEditor
     
                 return path.Split(';').Where(_ => _ != "");
             }
+        }
+
+        internal static IEnumerable<string> MergeExecutableExtensions(IEnumerable<string> systemExtensions, IEnumerable<string> userExtensions)
+        {
+            var merged = new List<string>();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var extension in systemExtensions.Concat(userExtensions))
+            {
+                if (!seen.Add(extension))
+                {
+                    continue;
+                }
+
+                merged.Add(extension);
+            }
+
+            return merged;
         }
 
         private void WritePathToRegistry(RegistryKey rootKey, string key, IEnumerable<PathEntry> path)
