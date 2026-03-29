@@ -17,27 +17,70 @@ namespace WindowsPathEditor
             return string.Format("path_backup_{0:yyMMdd_HHmmss}.reg", timestamp);
         }
 
+        internal static string CreateApplyFileName(DateTime timestamp)
+        {
+            return string.Format("apply_path_{0:yyMMdd_HHmmss}.reg", timestamp);
+        }
+
         internal static string BuildRegFileContents(IEnumerable<PathEntry> systemPath, IEnumerable<PathEntry> userPath)
+        {
+            return BuildRegFileContents(systemPath, userPath, true, true);
+        }
+
+        internal static string BuildRegFileContents(
+            IEnumerable<PathEntry> systemPath,
+            IEnumerable<PathEntry> userPath,
+            bool includeSystemPath,
+            bool includeUserPath)
         {
             var builder = new StringBuilder();
 
             builder.AppendLine("Windows Registry Editor Version 5.00");
             builder.AppendLine();
-            AppendPathValue(builder, SystemEnvironmentKey, systemPath);
-            builder.AppendLine();
-            AppendPathValue(builder, UserEnvironmentKey, userPath);
+
+            if (includeSystemPath)
+            {
+                AppendPathValue(builder, SystemEnvironmentKey, systemPath);
+            }
+
+            if (includeSystemPath && includeUserPath)
+            {
+                builder.AppendLine();
+            }
+
+            if (includeUserPath)
+            {
+                AppendPathValue(builder, UserEnvironmentKey, userPath);
+            }
 
             return builder.ToString();
         }
 
         internal static string WriteBackup(IEnumerable<PathEntry> systemPath, IEnumerable<PathEntry> userPath, DateTime timestamp)
         {
-            var backupDirectory = ResolveBackupDirectory();
-            Directory.CreateDirectory(backupDirectory);
+            return WriteRegFile(
+                CreateBackupFileName(timestamp),
+                systemPath,
+                userPath,
+                timestamp,
+                true,
+                true);
+        }
 
-            var backupPath = Path.Combine(backupDirectory, CreateBackupFileName(timestamp));
-            File.WriteAllText(backupPath, BuildRegFileContents(systemPath, userPath), Encoding.Unicode);
-            return backupPath;
+        internal static string WriteApplyFile(
+            IEnumerable<PathEntry> systemPath,
+            IEnumerable<PathEntry> userPath,
+            DateTime timestamp,
+            bool includeSystemPath,
+            bool includeUserPath)
+        {
+            return WriteRegFile(
+                CreateApplyFileName(timestamp),
+                systemPath,
+                userPath,
+                timestamp,
+                includeSystemPath,
+                includeUserPath);
         }
 
         private static void AppendPathValue(StringBuilder builder, string registryKey, IEnumerable<PathEntry> path)
@@ -46,7 +89,7 @@ namespace WindowsPathEditor
             builder.AppendLine("\"Path\"=" + FormatExpandStringValue(string.Join(";", SafePath(path).Select(_ => _.SymbolicPath).ToArray())));
         }
 
-        private static string ResolveBackupDirectory()
+        internal static string ResolveOutputDirectory()
         {
             var preferred = AppDomain.CurrentDomain.BaseDirectory;
             if (CanWriteToDirectory(preferred))
@@ -58,6 +101,25 @@ namespace WindowsPathEditor
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "WindowsPathEditor",
                 "Backups");
+        }
+
+        private static string WriteRegFile(
+            string fileName,
+            IEnumerable<PathEntry> systemPath,
+            IEnumerable<PathEntry> userPath,
+            DateTime timestamp,
+            bool includeSystemPath,
+            bool includeUserPath)
+        {
+            var outputDirectory = ResolveOutputDirectory();
+            Directory.CreateDirectory(outputDirectory);
+
+            var outputPath = Path.Combine(outputDirectory, fileName);
+            File.WriteAllText(
+                outputPath,
+                BuildRegFileContents(systemPath, userPath, includeSystemPath, includeUserPath),
+                Encoding.Unicode);
+            return outputPath;
         }
 
         private static bool CanWriteToDirectory(string directory)
