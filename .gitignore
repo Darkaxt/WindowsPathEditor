@@ -6,6 +6,7 @@ Release
 packages
 superpowers
 .claude/
+docs/superpowers/specs/
 obj/
 bin/
 TestResults/

@@ -47,7 +47,7 @@ Features
 - **UAC aware** — edits to the System PATH trigger a UAC elevation prompt;
   User PATH changes save silently.
 
-![Screen Shot of Windows Path Editor](https://raw.github.com/Darkaxt/WindowsPathEditor/master/screenshot.png)
+![Screen Shot of Windows Path Editor](./screenshot.png)
 
 Building from source
 --------------------
