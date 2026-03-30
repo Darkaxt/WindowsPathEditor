@@ -109,6 +109,14 @@
             </Button>
 
             <Border Height="20" />
+            <Button Click="AutoSort_Click" Padding="0,5">
+                <StackPanel>
+                    <TextBlock TextWrapping="WrapWithOverflow" TextAlignment="Center" FontWeight="Bold">Auto Sort</TextBlock>
+                    <TextBlock TextWrapping="WrapWithOverflow" TextAlignment="Center" FontSize="10" Margin="0,10,0,0">Suggest and apply better order for DLL resolution.</TextBlock>
+                </StackPanel>
+            </Button>
+
+            <Border Height="20" />
 
             <Button Padding="0,5" Click="Scan_Click">
                 <StackPanel>
