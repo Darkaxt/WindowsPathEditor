@@ -93,6 +93,8 @@ namespace WindowsPathEditor
             }
 
             var conflictsByPathIndex = new Dictionary<int, IList<string>>();
+            var winningPathIndexes = new HashSet<int>();
+            var losingPathIndexes = new HashSet<int>();
             var groupsByKey = new Dictionary<string, List<PathConflictRow>>(StringComparer.Ordinal);
             var columnsByGroupKey = new Dictionary<string, List<PathConflictColumn>>(StringComparer.Ordinal);
             var graphEdges = new Dictionary<Tuple<int, int>, HashSet<string>>();
@@ -125,8 +127,9 @@ namespace WindowsPathEditor
 
                 groupedFiles.Add(row);
 
-                foreach (var column in columns)
+                for (var columnIndex = 0; columnIndex < columns.Count; columnIndex++)
                 {
+                    var column = columns[columnIndex];
                     foreach (var participantIndex in column.SourcePathIndexes)
                     {
                         IList<string> pathConflicts;
@@ -137,6 +140,15 @@ namespace WindowsPathEditor
                         }
 
                         pathConflicts.Add(row.Filename);
+
+                        if (columnIndex == 0)
+                        {
+                            winningPathIndexes.Add(participantIndex);
+                        }
+                        else
+                        {
+                            losingPathIndexes.Add(participantIndex);
+                        }
                     }
                 }
 
@@ -198,7 +210,23 @@ namespace WindowsPathEditor
                 groups.SelectMany(_ => _.Columns).Select(_ => _.PathIndex).Distinct().OrderBy(_ => _).ToList(),
                 edges);
 
-            return new PathConflictReport(groups, conflictsByPathIndex, graph, false);
+            var winStatusByPathIndex = new Dictionary<int, ConflictWinStatus>();
+            foreach (var pathIndex in winningPathIndexes)
+            {
+                winStatusByPathIndex[pathIndex] = losingPathIndexes.Contains(pathIndex)
+                    ? ConflictWinStatus.Mixed
+                    : ConflictWinStatus.Winning;
+            }
+
+            foreach (var pathIndex in losingPathIndexes)
+            {
+                if (!winningPathIndexes.Contains(pathIndex))
+                {
+                    winStatusByPathIndex[pathIndex] = ConflictWinStatus.Losing;
+                }
+            }
+
+            return new PathConflictReport(groups, conflictsByPathIndex, winStatusByPathIndex, graph, false);
         }
 
         private static IList<PathConflictColumn> CollapseParticipants(

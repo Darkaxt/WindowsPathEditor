@@ -2,10 +2,10 @@ Windows Path Editor
 ===================
 
 A Windows PATH manager with drag-and-drop reordering, conflict detection, and
-automatic cleanup — now with a grouped conflict viewer, auto-sort, and
-registry backup on every save.
+automatic cleanup — now with a grouped conflict viewer, migration-aware
+auto-sort, bin crawling, and registry backup on every save.
 
-[Download Latest Version (1.9)](https://github.com/Darkaxt/WindowsPathEditor/releases/download/1.9/windowspatheditor-1.9.zip)
+[Download Latest Version (1.10)](https://github.com/Darkaxt/WindowsPathEditor/releases/download/1.10/windowspatheditor-1.10.zip)
 
 Introduction
 ------------
@@ -32,12 +32,15 @@ Features
   the exact set of PATH locations that share them. Each group shows a
   per-file version matrix with the runtime winner and highest-version copy
   highlighted. Column headers carry colour-coded SYSTEM / USER / MIXED origin
-  badges.
-- **Auto Sort** — suggests and applies a reordering that minimises DLL
-  shadowing by higher-version copies.
+  badges, and the main PATH lists mark conflict rows as winning, losing, or
+  mixed.
+- **Auto Sort** — suggests a migration-aware reordering that minimizes DLL
+  shadowing by higher-version copies, demotes misplaced user paths out of the
+  System PATH, cleans broken or duplicate entries in the same preview, and
+  alphabetizes neutral paths without disturbing real conflict anchors.
 - **Clean Up** — removes non-existent entries and exact duplicates in one
   click.
-- **Automatic scan** — searches `C:\` for `bin` directories and lets you
+- **Bin Crawler** — searches `C:\` for `bin` directories and lets you
   cherry-pick which ones to add.
 - **Registry backup** — writes a `.reg` rollback file beside the executable
   before every save, so you always have an emergency restore point.

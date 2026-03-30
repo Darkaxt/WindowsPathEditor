@@ -29,6 +29,14 @@
                                    VerticalAlignment="Center"
                                    Margin="0,-1,0,0" />
                     </Border>
+                    <TextBlock x:Name="conflictIndicator"
+                               Text="{Binding ConflictStatusSymbol}"
+                               Foreground="{StaticResource WarningBrush}"
+                               FontWeight="Bold"
+                               FontSize="13"
+                               HorizontalAlignment="Center"
+                               VerticalAlignment="Center"
+                               Visibility="Collapsed" />
                 </Grid>
                 <TextBlock x:Name="pathText"
                            Text="{Binding SymbolicPath}"
@@ -45,13 +53,23 @@
                     <Setter TargetName="pathText" Property="Foreground"
                             Value="{StaticResource TextSecondaryBrush}" />
                 </DataTrigger>
-                <!-- Conflict: orange text -->
+                <!-- Warning/conflict: orange text -->
                 <DataTrigger Binding="{Binding AlertLevel}" Value="1">
                     <Setter TargetName="indicatorImage" Property="Source"
                             Value="/WindowsPathEditor;component/Resources/error.png" />
                     <Setter TargetName="pathText" Property="Foreground"
                             Value="{StaticResource WarningBrush}" />
                 </DataTrigger>
+                <MultiDataTrigger>
+                    <MultiDataTrigger.Conditions>
+                        <Condition Binding="{Binding AlertLevel}" Value="1" />
+                        <Condition Binding="{Binding HasConflicts}" Value="True" />
+                    </MultiDataTrigger.Conditions>
+                    <Setter TargetName="indicatorImage" Property="Visibility"
+                            Value="Collapsed" />
+                    <Setter TargetName="conflictIndicator" Property="Visibility"
+                            Value="Visible" />
+                </MultiDataTrigger>
                 <!-- Missing / broken: red text + strikethrough -->
                 <DataTrigger Binding="{Binding AlertLevel}" Value="2">
                     <Setter TargetName="indicatorImage" Property="Source"

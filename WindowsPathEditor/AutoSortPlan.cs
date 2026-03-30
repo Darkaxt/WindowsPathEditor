@@ -23,7 +23,8 @@ namespace WindowsPathEditor
         CustomUserPathRetained = 1,
         UserOwnedSystemPath = 2,
         ManualReview = 3,
-        PromotionCausesVersionConflict = 4
+        PromotionCausesVersionConflict = 4,
+        SystemDemotionRequiresManualReview = 5
     }
 
     public sealed class AutoSortPlanStage
@@ -161,6 +162,30 @@ namespace WindowsPathEditor
         }
     }
 
+    public sealed class AutoSortCleanup
+    {
+        public AutoSortCleanup(PathEntry path, PathScope scope, PathCleanupRemovalKind kind)
+        {
+            Path = path;
+            Scope = scope;
+            Kind = kind;
+        }
+
+        public PathEntry Path { get; private set; }
+        public PathScope Scope { get; private set; }
+        public PathCleanupRemovalKind Kind { get; private set; }
+
+        public string Reason
+        {
+            get
+            {
+                return Kind == PathCleanupRemovalKind.MissingResolvedPath
+                    ? "Path does not exist"
+                    : "Duplicate of earlier resolved path";
+            }
+        }
+    }
+
     public sealed class AutoSortPlan
     {
         public AutoSortPlan(
@@ -172,6 +197,20 @@ namespace WindowsPathEditor
             IEnumerable<AutoSortReorder> reorders,
             IEnumerable<AutoSortDemotion> demotions,
             IEnumerable<AutoSortWarning> warnings)
+            : this(before, afterMigration, afterAutosort, promotions, normalizations, reorders, demotions, warnings, null)
+        {
+        }
+
+        public AutoSortPlan(
+            AutoSortPlanStage before,
+            AutoSortPlanStage afterMigration,
+            AutoSortPlanStage afterAutosort,
+            IEnumerable<AutoSortPromotion> promotions,
+            IEnumerable<AutoSortNormalization> normalizations,
+            IEnumerable<AutoSortReorder> reorders,
+            IEnumerable<AutoSortDemotion> demotions,
+            IEnumerable<AutoSortWarning> warnings,
+            IEnumerable<AutoSortCleanup> cleanup)
         {
             Before = before ?? new AutoSortPlanStage(AutoSortPlanStageKind.Before, null, null);
             AfterMigration = afterMigration ?? new AutoSortPlanStage(AutoSortPlanStageKind.AfterMigration, null, null);
@@ -181,6 +220,7 @@ namespace WindowsPathEditor
             Reorders = (reorders ?? Enumerable.Empty<AutoSortReorder>()).ToList();
             Demotions = (demotions ?? Enumerable.Empty<AutoSortDemotion>()).ToList();
             Warnings = (warnings ?? Enumerable.Empty<AutoSortWarning>()).ToList();
+            Cleanup = (cleanup ?? Enumerable.Empty<AutoSortCleanup>()).ToList();
         }
 
         public AutoSortPlanStage Before { get; private set; }
@@ -191,12 +231,15 @@ namespace WindowsPathEditor
         public IList<AutoSortReorder> Reorders { get; private set; }
         public IList<AutoSortDemotion> Demotions { get; private set; }
         public IList<AutoSortWarning> Warnings { get; private set; }
+        public IList<AutoSortCleanup> Cleanup { get; private set; }
 
         public bool HasChanges
         {
             get
             {
-                return StagesDiffer(Before, AfterMigration) || StagesDiffer(AfterMigration, AfterAutosort);
+                return Cleanup.Count > 0 ||
+                    StagesDiffer(Before, AfterMigration) ||
+                    StagesDiffer(AfterMigration, AfterAutosort);
             }
         }
 
@@ -205,6 +248,7 @@ namespace WindowsPathEditor
             get
             {
                 return HasChanges ||
+                    Cleanup.Count > 0 ||
                     Promotions.Count > 0 ||
                     Normalizations.Count > 0 ||
                     Reorders.Count > 0 ||

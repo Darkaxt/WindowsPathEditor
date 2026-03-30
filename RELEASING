@@ -2,7 +2,7 @@ Release checklist
 =================
 
 1. Bump version in `WindowsPathEditor/Properties/AssemblyInfo.cs`
-   - AssemblyVersion, AssemblyFileVersion (e.g. "1.9.0.0")
+   - AssemblyVersion, AssemblyFileVersion (e.g. "1.10.0.0")
 
 2. Build Release
    MSBuild WindowsPathEditor.sln /restore /p:Configuration=Release /p:Platform=x86

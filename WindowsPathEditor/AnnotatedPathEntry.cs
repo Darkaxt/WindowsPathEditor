@@ -12,6 +12,7 @@ namespace WindowsPathEditor
         private readonly object stateLock = new object();
         private List<string> validationIssues = new List<string>();
         private List<string> conflictingFiles = new List<string>();
+        private ConflictWinStatus? conflictWinStatus = null;
         private bool seriousError;
         private bool validationPending = true;
 
@@ -68,6 +69,24 @@ namespace WindowsPathEditor
             }
         }
 
+        public string ConflictStatusSymbol
+        {
+            get
+            {
+                lock (stateLock)
+                {
+                    if (conflictingFiles.Count == 0) return "";
+                    switch (conflictWinStatus)
+                    {
+                        case ConflictWinStatus.Winning: return "+";
+                        case ConflictWinStatus.Losing: return "-";
+                        case ConflictWinStatus.Mixed: return "\u00b1";
+                        default: return "!";
+                    }
+                }
+            }
+        }
+
         public string StatusSummary
         {
             get
@@ -102,13 +121,14 @@ namespace WindowsPathEditor
                 validationPending = true;
                 validationIssues = new List<string>();
                 conflictingFiles = new List<string>();
+                conflictWinStatus = null;
                 seriousError = false;
             }
 
             NotifyStatusChanged();
         }
 
-        public void SetStatus(IEnumerable<string> issues, bool isSeriousError, IEnumerable<string> files)
+        public void SetStatus(IEnumerable<string> issues, bool isSeriousError, IEnumerable<string> files, ConflictWinStatus? winStatus = null)
         {
             lock (stateLock)
             {
@@ -119,6 +139,7 @@ namespace WindowsPathEditor
                     .Distinct(System.StringComparer.OrdinalIgnoreCase)
                     .OrderBy(_ => _, System.StringComparer.OrdinalIgnoreCase)
                     .ToList();
+                conflictWinStatus = winStatus;
             }
 
             NotifyStatusChanged();
@@ -139,6 +160,7 @@ namespace WindowsPathEditor
             PropertyChanged.Notify(() => StatusSummary);
             PropertyChanged.Notify(() => AlertLevel);
             PropertyChanged.Notify(() => HasConflicts);
+            PropertyChanged.Notify(() => ConflictStatusSymbol);
         }
     }
 }

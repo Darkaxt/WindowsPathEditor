@@ -268,5 +268,32 @@ namespace WindowsPathEditor.Tests
             Assert.AreEqual(PathConflictColumnOrigin.System, group.Columns[0].Origin);
             Assert.AreEqual(PathConflictColumnOrigin.User, group.Columns[1].Origin);
         }
+
+        [TestMethod]
+        public void BuildReport_TracksWinningLosingAndMixedConflictPaths()
+        {
+            var root = TestDirectory.Create();
+            var alpha = root.CreateDirectory("alpha");
+            var beta = root.CreateDirectory("beta");
+            var gamma = root.CreateDirectory("gamma");
+
+            root.CreateFile(alpha, "shared-ab.exe");
+            root.CreateFile(beta, "shared-ab.exe");
+            root.CreateFile(beta, "shared-bc.dll");
+            root.CreateFile(gamma, "shared-bc.dll");
+
+            var report = PathConflictAnalyzer.BuildReport(
+                new[]
+                {
+                    new PathEntry(alpha),
+                    new PathEntry(beta),
+                    new PathEntry(gamma)
+                },
+                new[] { ".exe" });
+
+            Assert.AreEqual(ConflictWinStatus.Winning, report.WinStatusByPathIndex[0]);
+            Assert.AreEqual(ConflictWinStatus.Mixed, report.WinStatusByPathIndex[1]);
+            Assert.AreEqual(ConflictWinStatus.Losing, report.WinStatusByPathIndex[2]);
+        }
     }
 }

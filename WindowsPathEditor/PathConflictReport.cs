@@ -170,12 +170,20 @@ namespace WindowsPathEditor
         public IList<PathConflictGraphEdge> Edges { get; private set; }
     }
 
+    public enum ConflictWinStatus
+    {
+        Winning = 1,
+        Mixed = 0,
+        Losing = -1
+    }
+
     public sealed class PathConflictReport
     {
         public static readonly PathConflictReport Empty =
             new PathConflictReport(
                 Enumerable.Empty<PathConflictGroup>(),
                 new Dictionary<int, IList<string>>(),
+                new Dictionary<int, ConflictWinStatus>(),
                 PathConflictGraph.Empty,
                 false);
 
@@ -183,23 +191,27 @@ namespace WindowsPathEditor
             new PathConflictReport(
                 Enumerable.Empty<PathConflictGroup>(),
                 new Dictionary<int, IList<string>>(),
+                new Dictionary<int, ConflictWinStatus>(),
                 PathConflictGraph.Empty,
                 true);
 
         public PathConflictReport(
             IEnumerable<PathConflictGroup> groups,
             IDictionary<int, IList<string>> conflictFilesByPathIndex,
+            IDictionary<int, ConflictWinStatus> winStatusByPathIndex,
             PathConflictGraph graph,
             bool isPending)
         {
             Groups = groups.ToList();
             ConflictFilesByPathIndex = conflictFilesByPathIndex;
+            WinStatusByPathIndex = winStatusByPathIndex;
             Graph = graph;
             IsPending = isPending;
         }
 
         public IList<PathConflictGroup> Groups { get; private set; }
         public IDictionary<int, IList<string>> ConflictFilesByPathIndex { get; private set; }
+        public IDictionary<int, ConflictWinStatus> WinStatusByPathIndex { get; private set; }
         public PathConflictGraph Graph { get; private set; }
         public bool IsPending { get; private set; }
         public bool HasConflicts { get { return Groups.Count > 0; } }

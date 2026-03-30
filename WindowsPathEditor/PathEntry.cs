@@ -157,7 +157,14 @@ namespace WindowsPathEditor
             {
                 if (entry.Value != "" && Directory.Exists(entry.Value) && path.StartsWith(entry.Value, StringComparison.OrdinalIgnoreCase))
                 {
-                    return new PathEntry("%" + entry.Key + "%" + path.Substring(entry.Value.Length));
+                    var suffixIndex = entry.Value.Length;
+                    if (entry.Value.EndsWith("\\", StringComparison.OrdinalIgnoreCase) &&
+                        path.Length > entry.Value.Length)
+                    {
+                        suffixIndex--;
+                    }
+
+                    return new PathEntry("%" + entry.Key + "%" + path.Substring(suffixIndex));
                 }
             }
 
@@ -198,7 +205,9 @@ namespace WindowsPathEditor
         private static IEnumerable<KeyValuePair<string, string>> OrderEnvironment(IEnumerable<KeyValuePair<string, string>> environmentVariables)
         {
             return environmentVariables
-                .Where(entry => !string.IsNullOrEmpty(entry.Value) && entry.Value.Length > 3)
+                .Where(entry =>
+                    !string.IsNullOrEmpty(entry.Value) &&
+                    (entry.Value.Length > 3 || string.Equals(entry.Key, "SystemDrive", StringComparison.OrdinalIgnoreCase)))
                 .OrderByDescending(entry => entry.Value.Length)
                 .ThenByDescending(entry => entry.Key.Length)
                 .ThenBy(entry => entry.Key, StringComparer.OrdinalIgnoreCase);

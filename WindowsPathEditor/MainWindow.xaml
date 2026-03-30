@@ -153,8 +153,8 @@
             </Button>
 
             <Button Click="Scan_Click" Padding="6,8" Margin="0,0,0,6"
-                    ToolTip="Search C:\ for directories called &quot;bin&quot;.">
-                <TextBlock Text="Automatic" FontWeight="SemiBold"
+                    ToolTip="Search the system for directories named &quot;bin&quot; and offer them for import.">
+                <TextBlock Text="Bin Crawler" FontWeight="SemiBold"
                            TextWrapping="Wrap" TextAlignment="Center" />
             </Button>
 

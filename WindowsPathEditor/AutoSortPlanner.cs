@@ -29,17 +29,20 @@ namespace WindowsPathEditor
             // true starting point regardless of how many iterations the loop runs.
             var originalSystem = SafePath(systemPath);
             var originalUser = SafePath(userPath);
+            var cleanup = PathCleanup.Clean(originalSystem, originalUser);
+            var cleanupRecords = BuildCleanup(cleanup.RemovedEntries);
 
             // Iterate until the output stabilises (AfterAutosort == current input).
             // Each iteration's output becomes the next iteration's input so that
-            // promotions, demotions, and reorders from one pass are visible to the next.
+            // promotions, normalizations, and reorders from one pass are visible to the next.
             // A cap of 20 prevents infinite loops on pathological inputs.
-            var currentSystem = originalSystem;
-            var currentUser = originalUser;
+            var currentSystem = SafePath(cleanup.SystemPath);
+            var currentUser = SafePath(cleanup.UserPath);
             PathMigrationSimulationResult firstResult = null;
             PathMigrationSimulationResult lastResult = null;
             PathMigrationSimulationResult firstPass1 = null;
             HashSet<string> firstPromotionExclusionKeys = null;
+            HashSet<string> firstSystemDemotionKeys = null;
             const int maxIterations = 20;
 
             for (var i = 0; i < maxIterations; i++)
@@ -47,10 +50,12 @@ namespace WindowsPathEditor
                 // Pass 1: full simulation with no exclusions to reveal conflicts.
                 var pass1 = PathMigrationSimulator.Simulate(currentSystem, currentUser, extensions, policy, simMode);
 
-                var systemDemotionKeys = FindSystemDemotionCandidates(pass1, extensions);
                 var promotionExclusionKeys = FindBadPromotionKeys(pass1, extensions);
+                var systemDemotionKeys = FindSystemDemotionKeys(pass1, extensions, policy);
 
-                // Pass 2: re-simulate with demotion and promotion-exclusion sets applied.
+                // Pass 2: re-simulate with promotion exclusions and selective demotions applied.
+                // Only user-owned System PATH entries and non-SystemRoot system winners that
+                // shadow higher-version user files are demoted automatically.
                 var result = PathMigrationSimulator.Simulate(
                     currentSystem,
                     currentUser,
@@ -69,6 +74,7 @@ namespace WindowsPathEditor
                     firstResult = result;
                     firstPass1 = pass1;
                     firstPromotionExclusionKeys = promotionExclusionKeys;
+                    firstSystemDemotionKeys = systemDemotionKeys;
                 }
 
                 lastResult = result;
@@ -87,6 +93,7 @@ namespace WindowsPathEditor
             // The applied paths (AfterAutosort) come from the last (stable) iteration.
             var warnings = BuildWarnings(firstResult.Entries)
                 .Concat(BuildBlockedPromotionWarnings(firstPass1, firstPromotionExclusionKeys, extensions))
+                .Concat(BuildBlockedSystemDemotionWarnings(firstPass1, firstSystemDemotionKeys, extensions))
                 .ToList();
 
             var beforeConflicts = PathConflictMetrics.FromReport(
@@ -95,15 +102,31 @@ namespace WindowsPathEditor
                     extensions,
                     originalSystem.Count));
 
+            IList<PathEntry> finalSystemPath;
+            IList<PathEntry> finalUserPath;
+            PathConflictMetrics finalConflicts;
+            AlphabetizeConflictFreePaths(
+                lastResult.AutosortedSystemPath,
+                lastResult.AutosortedUserPath,
+                extensions,
+                out finalSystemPath,
+                out finalUserPath,
+                out finalConflicts);
+
             return new AutoSortPlan(
                 new AutoSortPlanStage(AutoSortPlanStageKind.Before, originalSystem, originalUser, beforeConflicts),
                 new AutoSortPlanStage(AutoSortPlanStageKind.AfterMigration, firstResult.SimulatedSystemPath, firstResult.SimulatedUserPath, firstResult.AfterMigrationConflicts),
-                new AutoSortPlanStage(AutoSortPlanStageKind.AfterAutosort, lastResult.AutosortedSystemPath, lastResult.AutosortedUserPath, lastResult.AfterAutosortConflicts),
+                new AutoSortPlanStage(AutoSortPlanStageKind.AfterAutosort, finalSystemPath, finalUserPath, finalConflicts),
                 BuildPromotions(firstResult.Entries),
                 BuildNormalizations(firstResult.Entries),
-                BuildReorders(lastResult),
+                BuildReorders(
+                    firstResult.SimulatedSystemPath,
+                    firstResult.SimulatedUserPath,
+                    finalSystemPath,
+                    finalUserPath),
                 BuildDemotions(firstResult.Entries, extensions),
-                warnings);
+                warnings,
+                cleanupRecords);
         }
 
         private static bool PathListsEqual(IEnumerable<PathEntry> a, IEnumerable<PathEntry> b)
@@ -140,6 +163,13 @@ namespace WindowsPathEditor
                     _.ProposedPath,
                     _.ProposedScope,
                     _.Ownership))
+                .ToList();
+        }
+
+        private static IList<AutoSortCleanup> BuildCleanup(IEnumerable<PathCleanupRemovedEntry> removedEntries)
+        {
+            return (removedEntries ?? Enumerable.Empty<PathCleanupRemovedEntry>())
+                .Select(entry => new AutoSortCleanup(entry.Path, entry.Scope, entry.Kind))
                 .ToList();
         }
 
@@ -183,12 +213,9 @@ namespace WindowsPathEditor
             PathMigrationSimulationResult pass1,
             IList<string> extensions)
         {
-            var promotedByProposed = pass1.Entries
-                .Where(e => e.IsPromotedToSystem && e.ProposedPath != null)
-                .ToDictionary(
-                    e => e.ProposedPath.SymbolicPath ?? "",
-                    e => e.OriginalPath != null ? e.OriginalPath.SymbolicPath ?? "" : "",
-                    StringComparer.OrdinalIgnoreCase);
+            var promotedByProposed = GroupEntriesByProposedPath(
+                (pass1.Entries ?? Enumerable.Empty<PathMigrationSimulationEntry>())
+                    .Where(e => e.IsPromotedToSystem && e.ProposedPath != null));
 
             if (promotedByProposed.Count == 0)
                 return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -205,66 +232,164 @@ namespace WindowsPathEditor
                 if (!hasShadowed) continue;
 
                 var winner = group.Columns.OrderBy(c => c.PathIndex).First();
-                var winnerKey = winner.Path != null ? winner.Path.SymbolicPath ?? "" : "";
+                var winnerKey = GetPathKey(winner.Path);
 
-                string originalKey;
-                if (promotedByProposed.TryGetValue(winnerKey, out originalKey))
-                    keys.Add(originalKey);
+                List<PathMigrationSimulationEntry> promotedEntries;
+                if (!promotedByProposed.TryGetValue(winnerKey, out promotedEntries))
+                    continue;
+
+                foreach (var entry in promotedEntries)
+                {
+                    keys.Add(GetPathKey(entry.OriginalPath));
+                }
             }
 
             return keys;
         }
 
         /// <summary>
-        /// Returns the set of post-simulation System PATH symbolic paths that are winning
-        /// over higher-version files that remain in User PATH after pass 1.  These are
-        /// demoted to User PATH in pass 2 so the higher-version user files can win.
-        ///
-        /// The analysis runs on the SIMULATED path (not the original) so that entries
-        /// promoted in pass 1 (e.g. Zulu, Java) are already in System PATH and produce
-        /// System-vs-System conflicts — which are a reorder problem, not a demotion problem.
-        /// Only entries where the highest-version file lives in a genuinely User PATH column
-        /// are flagged for demotion.
+        /// Returns the set of original System PATH symbolic paths that should be demoted in
+        /// pass 2. User-owned System PATH entries are always demoted. Machine/custom entries
+        /// are demoted only when they shadow higher-version user files and are not inside the
+        /// protected SystemRoot branch.
         /// </summary>
-        private static HashSet<string> FindSystemDemotionCandidates(
+        private static HashSet<string> FindSystemDemotionKeys(
             PathMigrationSimulationResult pass1,
-            IList<string> extensions)
+            IList<string> extensions,
+            PathMigrationPolicy policy)
         {
+            var keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var systemEntries = (pass1 == null
+                    ? Enumerable.Empty<PathMigrationSimulationEntry>()
+                    : pass1.Entries ?? Enumerable.Empty<PathMigrationSimulationEntry>())
+                .Where(e => e.OriginalScope == PathScope.System)
+                .ToList();
+
+            foreach (var entry in DistinctByOriginalPath(systemEntries.Where(e =>
+                e.Ownership == PathOwnership.User &&
+                !IsProtectedSystemPath(e, policy))))
+            {
+                keys.Add(GetPathKey(entry.OriginalPath));
+            }
+
+            if (pass1 == null)
+                return keys;
+
             var report = PathConflictAnalyzer.BuildReport(
                 pass1.SimulatedSystemPath.Concat(pass1.SimulatedUserPath),
                 extensions,
                 pass1.SimulatedSystemPath.Count);
 
-            var keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var systemEntriesByProposed = GroupEntriesByProposedPath(
+                systemEntries.Where(e => e.ProposedPath != null));
+
+            foreach (var group in report.Groups)
+            {
+                var winner = group.Columns.OrderBy(c => c.PathIndex).First();
+                if (winner.Origin != PathConflictColumnOrigin.System) continue;
+
+                var winnerColumnIndex = group.Columns.IndexOf(winner);
+                var shadowedByUserFiles = group.Rows.Any(r => IsShadowedByUser(r, group.Columns, winnerColumnIndex));
+                if (!shadowedByUserFiles) continue;
+
+                List<PathMigrationSimulationEntry> matchingEntries;
+                if (!systemEntriesByProposed.TryGetValue(GetPathKey(winner.Path), out matchingEntries)) continue;
+
+                foreach (var entry in DistinctByOriginalPath(matchingEntries.Where(e =>
+                    e.Ownership != PathOwnership.User &&
+                    !IsProtectedSystemPath(e, policy))))
+                {
+                    keys.Add(GetPathKey(entry.OriginalPath));
+                }
+            }
+
+            return keys;
+        }
+
+        /// <summary>
+        /// Builds warnings for System PATH entries that currently win over higher-version
+        /// files in User PATH but remain protected from automatic demotion.
+        /// </summary>
+        private static IEnumerable<AutoSortWarning> BuildBlockedSystemDemotionWarnings(
+            PathMigrationSimulationResult pass1,
+            HashSet<string> systemDemotionKeys,
+            IList<string> extensions)
+        {
+            if (pass1 == null)
+                yield break;
+
+            var report = PathConflictAnalyzer.BuildReport(
+                pass1.SimulatedSystemPath.Concat(pass1.SimulatedUserPath),
+                extensions,
+                pass1.SimulatedSystemPath.Count);
+
+            var systemEntriesByProposed = GroupEntriesByProposedPath(
+                (pass1.Entries ?? Enumerable.Empty<PathMigrationSimulationEntry>())
+                    .Where(e => e.OriginalScope == PathScope.System && e.ProposedPath != null));
+
             foreach (var group in report.Groups)
             {
                 // Winner must be a pure System PATH entry.
                 var winner = group.Columns.OrderBy(c => c.PathIndex).First();
                 if (winner.Origin != PathConflictColumnOrigin.System) continue;
 
+                var winnerKey = GetPathKey(winner.Path);
+                List<PathMigrationSimulationEntry> matchingEntries;
+                if (!systemEntriesByProposed.TryGetValue(winnerKey, out matchingEntries)) continue;
+
                 var winnerColumnIndex = group.Columns.IndexOf(winner);
 
-                // Only demote when the highest-version cell belongs to a User PATH column.
-                // System-vs-System version differences are a reorder problem, not demotion.
-                var hasShadowedByUser = group.Rows.Any(r =>
+                var shadowedByUserFiles = group.Rows
+                    .Where(r => IsShadowedByUser(r, group.Columns, winnerColumnIndex))
+                    .Select(r => r.Filename)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(f => f, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+                if (shadowedByUserFiles.Count == 0) continue;
+
+                var fileList = shadowedByUserFiles.Count <= 3
+                    ? string.Join(", ", shadowedByUserFiles.ToArray())
+                    : string.Join(", ", shadowedByUserFiles.Take(3).ToArray()) +
+                      string.Format(" (+{0} more)", shadowedByUserFiles.Count - 3);
+
+                foreach (var entry in DistinctByOriginalPath(matchingEntries.Where(e =>
+                    e.Ownership != PathOwnership.User &&
+                    !systemDemotionKeys.Contains(GetPathKey(e.OriginalPath)))))
                 {
-                    if (r.WinnerState != PathConflictWinnerState.ShadowedByHigherVersion) return false;
-                    for (var i = 0; i < r.Cells.Count && i < group.Columns.Count; i++)
-                    {
-                        if (i == winnerColumnIndex) continue;
-                        if (r.Cells[i].IsHighestVersion &&
-                            group.Columns[i].Origin != PathConflictColumnOrigin.System)
-                            return true;
-                    }
-                    return false;
-                });
+                    yield return new AutoSortWarning(
+                        AutoSortWarningKind.SystemDemotionRequiresManualReview,
+                        entry.OriginalPath,
+                        string.Format(
+                            "Higher-version files were found later in User PATH ({0}), but automatic demotion of System PATH entries is disabled because it can create broader conflicts. Review manually.",
+                            fileList));
+                }
+            }
+        }
 
-                if (!hasShadowedByUser) continue;
+        /// <summary>
+        /// Returns true when a row is shadowed by a higher-version file that lives in a
+        /// non-System PATH column.
+        /// </summary>
+        private static bool IsShadowedByUser(
+            PathConflictRow row,
+            IList<PathConflictColumn> columns,
+            int winnerColumnIndex)
+        {
+            if (row == null || row.WinnerState != PathConflictWinnerState.ShadowedByHigherVersion)
+                return false;
 
-                keys.Add(winner.Path != null ? winner.Path.SymbolicPath ?? "" : "");
+            for (var i = 0; i < row.Cells.Count && i < columns.Count; i++)
+            {
+                if (i == winnerColumnIndex) continue;
+                if (row.Cells[i].IsHighestVersion &&
+                    columns[i].Origin != PathConflictColumnOrigin.System)
+                {
+                    return true;
+                }
             }
 
-            return keys;
+            return false;
         }
 
         /// <summary>
@@ -285,14 +410,12 @@ namespace WindowsPathEditor
                 extensions,
                 pass1.SimulatedSystemPath.Count);
 
-            var promotedByProposed = pass1.Entries
-                .Where(e => e.IsPromotedToSystem && e.ProposedPath != null)
-                .ToDictionary(
-                    e => e.ProposedPath.SymbolicPath ?? "",
-                    e => e,
-                    StringComparer.OrdinalIgnoreCase);
+            var promotedByProposed = GroupEntriesByProposedPath(
+                (pass1.Entries ?? Enumerable.Empty<PathMigrationSimulationEntry>())
+                    .Where(e => e.IsPromotedToSystem && e.ProposedPath != null));
 
-            var shadowedByWinner = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+            var shadowedFilesByOriginalKey = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+            var entriesByOriginalKey = new Dictionary<string, PathMigrationSimulationEntry>(StringComparer.OrdinalIgnoreCase);
 
             foreach (var group in report.Groups)
             {
@@ -304,28 +427,36 @@ namespace WindowsPathEditor
                 if (shadowedFiles.Count == 0) continue;
 
                 var winner = group.Columns.OrderBy(c => c.PathIndex).First();
-                var winnerKey = winner.Path != null ? winner.Path.SymbolicPath ?? "" : "";
+                var winnerKey = GetPathKey(winner.Path);
 
-                PathMigrationSimulationEntry entry;
-                if (!promotedByProposed.TryGetValue(winnerKey, out entry)) continue;
+                List<PathMigrationSimulationEntry> promotedEntries;
+                if (!promotedByProposed.TryGetValue(winnerKey, out promotedEntries)) continue;
 
-                var originalKey = entry.OriginalPath != null ? entry.OriginalPath.SymbolicPath ?? "" : "";
-                if (!promotionExclusionKeys.Contains(originalKey)) continue;
-
-                List<string> acc;
-                if (!shadowedByWinner.TryGetValue(winnerKey, out acc))
+                foreach (var entry in DistinctByOriginalPath(promotedEntries))
                 {
-                    acc = new List<string>();
-                    shadowedByWinner[winnerKey] = acc;
-                }
+                    var originalKey = GetPathKey(entry.OriginalPath);
+                    if (!promotionExclusionKeys.Contains(originalKey)) continue;
 
-                acc.AddRange(shadowedFiles);
+                    if (!entriesByOriginalKey.ContainsKey(originalKey))
+                    {
+                        entriesByOriginalKey[originalKey] = entry;
+                    }
+
+                    List<string> acc;
+                    if (!shadowedFilesByOriginalKey.TryGetValue(originalKey, out acc))
+                    {
+                        acc = new List<string>();
+                        shadowedFilesByOriginalKey[originalKey] = acc;
+                    }
+
+                    acc.AddRange(shadowedFiles);
+                }
             }
 
-            foreach (var kv in shadowedByWinner)
+            foreach (var kv in shadowedFilesByOriginalKey)
             {
                 PathMigrationSimulationEntry entry;
-                if (!promotedByProposed.TryGetValue(kv.Key, out entry)) continue;
+                if (!entriesByOriginalKey.TryGetValue(kv.Key, out entry)) continue;
 
                 var files = kv.Value
                     .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -345,6 +476,85 @@ namespace WindowsPathEditor
                         "in User PATH: {0}. This entry will remain in User PATH.",
                         fileList));
             }
+        }
+
+        private static Dictionary<string, List<PathMigrationSimulationEntry>> GroupEntriesByProposedPath(
+            IEnumerable<PathMigrationSimulationEntry> entries)
+        {
+            var grouped = new Dictionary<string, List<PathMigrationSimulationEntry>>(StringComparer.OrdinalIgnoreCase);
+            foreach (var entry in entries ?? Enumerable.Empty<PathMigrationSimulationEntry>())
+            {
+                List<PathMigrationSimulationEntry> matches;
+                var key = GetPathKey(entry.ProposedPath);
+                if (!grouped.TryGetValue(key, out matches))
+                {
+                    matches = new List<PathMigrationSimulationEntry>();
+                    grouped[key] = matches;
+                }
+
+                matches.Add(entry);
+            }
+
+            return grouped;
+        }
+
+        private static IEnumerable<PathMigrationSimulationEntry> DistinctByOriginalPath(
+            IEnumerable<PathMigrationSimulationEntry> entries)
+        {
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var entry in entries ?? Enumerable.Empty<PathMigrationSimulationEntry>())
+            {
+                if (seen.Add(GetPathKey(entry.OriginalPath)))
+                {
+                    yield return entry;
+                }
+            }
+        }
+
+        private static bool IsProtectedSystemPath(
+            PathMigrationSimulationEntry entry,
+            PathMigrationPolicy policy)
+        {
+            if (entry == null || string.IsNullOrEmpty(entry.ResolvedPath))
+                return false;
+
+            return GetProtectedSystemRoots(policy)
+                .Any(root => IsPathUnderRoot(entry.ResolvedPath, root));
+        }
+
+        private static IList<string> GetProtectedSystemRoots(PathMigrationPolicy policy)
+        {
+            return (policy == null
+                    ? Enumerable.Empty<KeyValuePair<string, string>>()
+                    : policy.NormalizationVariables ?? Enumerable.Empty<KeyValuePair<string, string>>())
+                .Where(variable => IsProtectedSystemRootVariableName(variable.Key))
+                .Select(variable => PathMigrationPolicy.NormalizeRoot(variable.Value))
+                .Where(root => !string.IsNullOrEmpty(root))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderByDescending(root => root.Length)
+                .ToList();
+        }
+
+        private static bool IsProtectedSystemRootVariableName(string variableName)
+        {
+            if (string.IsNullOrEmpty(variableName))
+                return false;
+
+            return variableName.Equals("SystemRoot", StringComparison.OrdinalIgnoreCase) ||
+                variableName.Equals("windir", StringComparison.OrdinalIgnoreCase) ||
+                variableName.EndsWith("SystemRoot", StringComparison.OrdinalIgnoreCase) ||
+                variableName.EndsWith("windir", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsPathUnderRoot(string path, string root)
+        {
+            if (string.IsNullOrEmpty(path) || string.IsNullOrEmpty(root))
+                return false;
+
+            if (string.Equals(path, root, StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            return path.StartsWith(root.TrimEnd('\\') + "\\", StringComparison.OrdinalIgnoreCase);
         }
 
         private static IList<AutoSortDemotion> BuildDemotions(
@@ -411,22 +621,21 @@ namespace WindowsPathEditor
             return result;
         }
 
-        private static IList<AutoSortReorder> BuildReorders(PathMigrationSimulationResult result)
+        private static IList<AutoSortReorder> BuildReorders(
+            IEnumerable<PathEntry> beforeSystem,
+            IEnumerable<PathEntry> beforeUser,
+            IEnumerable<PathEntry> afterSystem,
+            IEnumerable<PathEntry> afterUser)
         {
             var reorders = new List<AutoSortReorder>();
-            if (result == null)
-            {
-                return reorders;
-            }
-
             reorders.AddRange(BuildScopedReorders(
                 PathScope.System,
-                result.SimulatedSystemPath,
-                result.AutosortedSystemPath));
+                beforeSystem,
+                afterSystem));
             reorders.AddRange(BuildScopedReorders(
                 PathScope.User,
-                result.SimulatedUserPath,
-                result.AutosortedUserPath));
+                beforeUser,
+                afterUser));
             return reorders;
         }
 
@@ -459,6 +668,72 @@ namespace WindowsPathEditor
             return reorders;
         }
 
+        private static void AlphabetizeConflictFreePaths(
+            IEnumerable<PathEntry> systemPath,
+            IEnumerable<PathEntry> userPath,
+            IList<string> extensions,
+            out IList<PathEntry> finalSystemPath,
+            out IList<PathEntry> finalUserPath,
+            out PathConflictMetrics finalConflicts)
+        {
+            var autosortedSystem = SafePath(systemPath);
+            var autosortedUser = SafePath(userPath);
+            var report = PathConflictAnalyzer.BuildReport(
+                autosortedSystem.Concat(autosortedUser),
+                extensions,
+                autosortedSystem.Count);
+            var conflictIndexes = new HashSet<int>(
+                report.ConflictFilesByPathIndex.Keys,
+                EqualityComparer<int>.Default);
+
+            finalSystemPath = AlphabetizeScopedConflictFreePaths(
+                autosortedSystem,
+                0,
+                conflictIndexes);
+            finalUserPath = AlphabetizeScopedConflictFreePaths(
+                autosortedUser,
+                autosortedSystem.Count,
+                conflictIndexes);
+
+            finalConflicts = PathConflictMetrics.FromReport(
+                PathConflictAnalyzer.BuildReport(
+                    finalSystemPath.Concat(finalUserPath),
+                    extensions,
+                    finalSystemPath.Count));
+        }
+
+        private static IList<PathEntry> AlphabetizeScopedConflictFreePaths(
+            IList<PathEntry> path,
+            int globalIndexOffset,
+            ISet<int> conflictIndexes)
+        {
+            var scopedPath = SafePath(path);
+            var alphabetizedEntries = scopedPath
+                .Where((entry, index) => !conflictIndexes.Contains(globalIndexOffset + index))
+                .OrderBy(GetAlphabetizeKey, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            if (alphabetizedEntries.Count < 2)
+            {
+                return scopedPath;
+            }
+
+            var result = new List<PathEntry>(scopedPath.Count);
+            var alphabetizedIndex = 0;
+            for (var i = 0; i < scopedPath.Count; i++)
+            {
+                if (conflictIndexes.Contains(globalIndexOffset + i))
+                {
+                    result.Add(scopedPath[i]);
+                    continue;
+                }
+
+                result.Add(alphabetizedEntries[alphabetizedIndex++]);
+            }
+
+            return result;
+        }
+
         private static IDictionary<string, Queue<int>> BuildIndexQueues(IEnumerable<PathEntry> path)
         {
             var indexes = new Dictionary<string, Queue<int>>(StringComparer.OrdinalIgnoreCase);
@@ -485,6 +760,11 @@ namespace WindowsPathEditor
         }
 
         private static string GetPathKey(PathEntry path)
+        {
+            return path == null ? "" : path.SymbolicPath ?? "";
+        }
+
+        private static string GetAlphabetizeKey(PathEntry path)
         {
             return path == null ? "" : path.SymbolicPath ?? "";
         }

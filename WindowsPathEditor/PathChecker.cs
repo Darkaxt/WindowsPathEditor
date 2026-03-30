@@ -205,9 +205,16 @@ namespace WindowsPathEditor
                 conflictingFiles = new List<string>();
             }
 
+            ConflictWinStatus? winStatus = null;
+            ConflictWinStatus pathWinStatus;
+            if (report.WinStatusByPathIndex.TryGetValue(index, out pathWinStatus))
+            {
+                winStatus = pathWinStatus;
+            }
+
             if (!IsLatestRequest(requestId) || abortCurrentCheck) return;
 
-            path.SetStatus(validationIssues, seriousError, conflictingFiles);
+            path.SetStatus(validationIssues, seriousError, conflictingFiles, winStatus);
         }
 
         /// <summary>

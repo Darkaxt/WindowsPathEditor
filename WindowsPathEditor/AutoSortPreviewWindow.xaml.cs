@@ -34,7 +34,8 @@ namespace WindowsPathEditor
                     return "No preview data is available.";
 
                 return string.Format(
-                    "{0} promotion(s), {1} demotion(s), {2} normalization(s), {3} reorder(s), {4} warning(s).",
+                    "{0} cleanup(s), {1} promotion(s), {2} demotion(s), {3} normalization(s), {4} reorder(s), {5} warning(s).",
+                    plan.Cleanup.Count,
                     plan.Promotions.Count,
                     plan.Demotions.Count,
                     plan.Normalizations.Count,
@@ -74,6 +75,11 @@ namespace WindowsPathEditor
             get { return FormatTabHeader("Promotions", Plan == null ? 0 : Plan.Promotions.Count); }
         }
 
+        public string CleanupTabHeader
+        {
+            get { return FormatTabHeader("Cleanup", Plan == null ? 0 : Plan.Cleanup.Count); }
+        }
+
         public string DemotionsTabHeader
         {
             get { return FormatTabHeader("Demotions", Plan == null ? 0 : Plan.Demotions.Count); }
@@ -107,6 +113,7 @@ namespace WindowsPathEditor
             window.RaisePropertyChanged("ChangeSummaryText");
             window.RaisePropertyChanged("MixedScopeMetricText");
             window.RaisePropertyChanged("ShadowedRowMetricText");
+            window.RaisePropertyChanged("CleanupTabHeader");
             window.RaisePropertyChanged("PromotionsTabHeader");
             window.RaisePropertyChanged("DemotionsTabHeader");
             window.RaisePropertyChanged("NormalizationsTabHeader");

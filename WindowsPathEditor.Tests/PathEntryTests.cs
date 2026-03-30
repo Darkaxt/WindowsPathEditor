@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace WindowsPathEditor.Tests
@@ -32,6 +33,42 @@ namespace WindowsPathEditor.Tests
             var entry = PathEntry.FromFilePath(@"C:\Program Files (x86)\Inno Setup 6", environment);
 
             Assert.AreEqual(@"%ProgramFiles(x86)%\Inno Setup 6", entry.SymbolicPath);
+        }
+
+        [TestMethod]
+        public void FromFilePath_UsesSystemDriveWhenNoMoreSpecificVariableMatches()
+        {
+            var environment = new Dictionary<string, string>
+            {
+                { "SystemDrive", @"C:\" },
+                { "SystemRoot", @"C:\Windows" }
+            };
+
+            var entry = PathEntry.FromFilePath(@"C:\libjpeg-turbo64\bin", environment);
+
+            Assert.AreEqual(@"%SystemDrive%\libjpeg-turbo64\bin", entry.SymbolicPath);
+        }
+
+        [TestMethod]
+        public void FromFilePath_PrefersSystemRootOverSystemDrive()
+        {
+            var environment = new Dictionary<string, string>
+            {
+                { "SystemDrive", @"C:\" },
+                { "SystemRoot", @"C:\Windows" }
+            };
+
+            var entry = PathEntry.FromFilePath(@"C:\Windows\System32", environment);
+
+            Assert.AreEqual(@"%SystemRoot%\System32", entry.SymbolicPath);
+        }
+
+        [TestMethod]
+        public void CreateDefault_IncludesSystemDriveNormalizationVariable()
+        {
+            var policy = PathMigrationPolicy.CreateDefault();
+
+            Assert.IsTrue(policy.NormalizationVariables.Any(_ => _.Key == "SystemDrive"));
         }
     }
 }

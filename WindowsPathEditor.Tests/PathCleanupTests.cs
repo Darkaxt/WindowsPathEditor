@@ -38,5 +38,25 @@ namespace WindowsPathEditor.Tests
                 new[] { userOnly },
                 cleaned.UserPath.Select(_ => _.SymbolicPath).ToArray());
         }
+
+        [TestMethod]
+        public void Clean_ReportsRemovedEntriesWithScopeAndReason()
+        {
+            var root = TestDirectory.Create();
+            var shared = root.CreateDirectory("shared");
+            var missing = Path.Combine(root.Root, "missing");
+
+            var cleaned = PathCleanup.Clean(
+                new[] { new PathEntry(shared) },
+                new[] { new PathEntry(shared), new PathEntry(missing) });
+
+            Assert.AreEqual(2, cleaned.RemovedEntries.Count);
+
+            var duplicate = cleaned.RemovedEntries.Single(_ => _.Path.SymbolicPath == shared && _.Scope == PathScope.User);
+            Assert.AreEqual(PathCleanupRemovalKind.DuplicateResolvedPath, duplicate.Kind);
+
+            var missingEntry = cleaned.RemovedEntries.Single(_ => _.Path.SymbolicPath == missing && _.Scope == PathScope.User);
+            Assert.AreEqual(PathCleanupRemovalKind.MissingResolvedPath, missingEntry.Kind);
+        }
     }
 }

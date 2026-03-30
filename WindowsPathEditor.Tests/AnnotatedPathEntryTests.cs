@@ -32,5 +32,20 @@ namespace WindowsPathEditor.Tests
             Assert.IsFalse(entry.HasConflicts);
             Assert.IsFalse(entry.SeriousError);
         }
+
+        [TestMethod]
+        public void SetStatus_UsesConflictWinStatusSymbols()
+        {
+            var entry = new AnnotatedPathEntry(new PathEntry(@"C:\Temp"));
+
+            entry.SetStatus(new string[0], false, new[] { "tool.dll" }, ConflictWinStatus.Winning);
+            Assert.AreEqual("+", entry.ConflictStatusSymbol);
+
+            entry.SetStatus(new string[0], false, new[] { "tool.dll" }, ConflictWinStatus.Losing);
+            Assert.AreEqual("-", entry.ConflictStatusSymbol);
+
+            entry.SetStatus(new string[0], false, new[] { "tool.dll" }, ConflictWinStatus.Mixed);
+            Assert.AreEqual("\u00b1", entry.ConflictStatusSymbol);
+        }
     }
 }

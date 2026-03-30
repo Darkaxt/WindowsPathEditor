@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Text;
 
@@ -49,6 +50,7 @@ namespace WindowsPathEditor
         public static PathMigrationPolicy CreateDefault()
         {
             var variables = new List<KeyValuePair<string, string>>();
+            AddVariable(variables, "SystemDrive", GetSystemDriveRoot());
             AddVariable(variables, "LocalAppData", Environment.GetEnvironmentVariable("LocalAppData"));
             AddVariable(variables, "AppData", Environment.GetEnvironmentVariable("AppData"));
             AddVariable(variables, "UserProfile", Environment.GetEnvironmentVariable("UserProfile"));
@@ -128,6 +130,24 @@ namespace WindowsPathEditor
         {
             if (roots == null || string.IsNullOrEmpty(value)) return;
             roots.Add(value);
+        }
+
+        private static string GetSystemDriveRoot()
+        {
+            var systemDrive = Environment.GetEnvironmentVariable("SystemDrive");
+            if (!string.IsNullOrEmpty(systemDrive))
+            {
+                return systemDrive.EndsWith("\\", StringComparison.Ordinal) ? systemDrive : systemDrive + "\\";
+            }
+
+            var systemRoot = Environment.GetEnvironmentVariable("SystemRoot");
+            if (!string.IsNullOrEmpty(systemRoot))
+            {
+                return Path.GetPathRoot(systemRoot);
+            }
+
+            var windir = Environment.GetEnvironmentVariable("windir");
+            return string.IsNullOrEmpty(windir) ? "" : Path.GetPathRoot(windir);
         }
 
         private sealed class VariableComparer : IEqualityComparer<KeyValuePair<string, string>>
@@ -479,8 +499,9 @@ namespace WindowsPathEditor
             var isExcludedFromPromotion = promotionExclusions != null &&
                 promotionExclusions.Contains(safePath.SymbolicPath ?? "");
 
-            // A System PATH entry is flagged for demotion when it has been identified as
-            // shadowing higher-version files that reside in User PATH.
+            // A System PATH entry is flagged for demotion when planner policy decides it
+            // should live in User PATH instead (for example user-owned directories currently
+            // sitting in System PATH, or app runtimes shadowing higher-version user tools).
             var isDemotionCandidate = scope == PathScope.System &&
                 systemDemotions != null &&
                 systemDemotions.Contains(safePath.SymbolicPath ?? "");
@@ -502,7 +523,7 @@ namespace WindowsPathEditor
                 {
                     proposedScope = PathScope.User;
                     isDemoted = true;
-                    notes.Add("System PATH entry demoted to User PATH because it shadows higher-version files in User PATH.");
+                    notes.Add("System PATH entry would be moved to User PATH by autosort.");
                 }
                 else if (scope == PathScope.User && ownership == PathOwnership.Machine && !isExcludedFromPromotion)
                 {
