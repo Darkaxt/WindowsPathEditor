@@ -25,41 +25,90 @@ namespace WindowsPathEditor
             var extensions = (executableExtensions ?? Enumerable.Empty<string>()).ToList();
             var simMode = ToSimulationMode(mode);
 
-            // Pass 1: simulate without any exclusions or demotions to discover what conflicts exist.
-            var pass1 = PathMigrationSimulator.Simulate(systemPath, userPath, extensions, policy, simMode);
+            // Snapshot the original paths so the Before stage always reflects the
+            // true starting point regardless of how many iterations the loop runs.
+            var originalSystem = SafePath(systemPath);
+            var originalUser = SafePath(userPath);
 
-            // Find System PATH entries that shadow higher-version User PATH files.  These
-            // should be demoted regardless of whether they were newly promoted or were already
-            // sitting in System PATH from a previous Auto Sort apply.
-            var systemDemotionKeys = FindSystemDemotionCandidates(pass1, extensions);
+            // Iterate until the output stabilises (AfterAutosort == current input).
+            // Each iteration's output becomes the next iteration's input so that
+            // promotions, demotions, and reorders from one pass are visible to the next.
+            // A cap of 20 prevents infinite loops on pathological inputs.
+            var currentSystem = originalSystem;
+            var currentUser = originalUser;
+            PathMigrationSimulationResult firstResult = null;
+            PathMigrationSimulationResult lastResult = null;
+            PathMigrationSimulationResult firstPass1 = null;
+            HashSet<string> firstPromotionExclusionKeys = null;
+            const int maxIterations = 20;
 
-            // Find User PATH promotions from pass 1 that would introduce version conflicts
-            // in the post-migration path.  Block these in pass 2 so they stay in User PATH.
-            var promotionExclusionKeys = FindBadPromotionKeys(pass1, extensions);
+            for (var i = 0; i < maxIterations; i++)
+            {
+                // Pass 1: full simulation with no exclusions to reveal conflicts.
+                var pass1 = PathMigrationSimulator.Simulate(currentSystem, currentUser, extensions, policy, simMode);
 
-            // Pass 2: re-simulate with bad promotions excluded and bad system entries demoted.
-            var result = PathMigrationSimulator.Simulate(
-                systemPath,
-                userPath,
-                extensions,
-                policy,
-                simMode,
-                promotionExclusionKeys,
-                systemDemotionKeys);
+                var systemDemotionKeys = FindSystemDemotionCandidates(pass1, extensions);
+                var promotionExclusionKeys = FindBadPromotionKeys(pass1, extensions);
 
-            var warnings = BuildWarnings(result.Entries)
-                .Concat(BuildBlockedPromotionWarnings(pass1, promotionExclusionKeys, extensions))
+                // Pass 2: re-simulate with demotion and promotion-exclusion sets applied.
+                var result = PathMigrationSimulator.Simulate(
+                    currentSystem,
+                    currentUser,
+                    extensions,
+                    policy,
+                    simMode,
+                    promotionExclusionKeys,
+                    systemDemotionKeys);
+
+                // The first iteration is always from the original input — its entries describe
+                // promotions/demotions/normalizations relative to what the user started with.
+                // Later iterations refine the applied paths but their entries are not meaningful
+                // for display because they compare against an already-transformed input.
+                if (i == 0)
+                {
+                    firstResult = result;
+                    firstPass1 = pass1;
+                    firstPromotionExclusionKeys = promotionExclusionKeys;
+                }
+
+                lastResult = result;
+
+                // Stable when the autosorted output is identical to the current input.
+                if (PathListsEqual(result.AutosortedSystemPath, currentSystem) &&
+                    PathListsEqual(result.AutosortedUserPath, currentUser))
+                    break;
+
+                currentSystem = SafePath(result.AutosortedSystemPath);
+                currentUser = SafePath(result.AutosortedUserPath);
+            }
+
+            // Display tabs (Promotions/Demotions/Normalizations/Warnings) are driven by the
+            // first iteration so they describe what changes relative to the original input.
+            // The applied paths (AfterAutosort) come from the last (stable) iteration.
+            var warnings = BuildWarnings(firstResult.Entries)
+                .Concat(BuildBlockedPromotionWarnings(firstPass1, firstPromotionExclusionKeys, extensions))
                 .ToList();
 
+            var beforeConflicts = PathConflictMetrics.FromReport(
+                PathConflictAnalyzer.BuildReport(
+                    originalSystem.Concat(originalUser),
+                    extensions,
+                    originalSystem.Count));
+
             return new AutoSortPlan(
-                new AutoSortPlanStage(AutoSortPlanStageKind.Before, result.OriginalSystemPath, result.OriginalUserPath, result.BeforeConflicts),
-                new AutoSortPlanStage(AutoSortPlanStageKind.AfterMigration, result.SimulatedSystemPath, result.SimulatedUserPath, result.AfterMigrationConflicts),
-                new AutoSortPlanStage(AutoSortPlanStageKind.AfterAutosort, result.AutosortedSystemPath, result.AutosortedUserPath, result.AfterAutosortConflicts),
-                BuildPromotions(result.Entries),
-                BuildNormalizations(result.Entries),
-                BuildReorders(result),
-                BuildDemotions(result.Entries, extensions),
+                new AutoSortPlanStage(AutoSortPlanStageKind.Before, originalSystem, originalUser, beforeConflicts),
+                new AutoSortPlanStage(AutoSortPlanStageKind.AfterMigration, firstResult.SimulatedSystemPath, firstResult.SimulatedUserPath, firstResult.AfterMigrationConflicts),
+                new AutoSortPlanStage(AutoSortPlanStageKind.AfterAutosort, lastResult.AutosortedSystemPath, lastResult.AutosortedUserPath, lastResult.AfterAutosortConflicts),
+                BuildPromotions(firstResult.Entries),
+                BuildNormalizations(firstResult.Entries),
+                BuildReorders(lastResult),
+                BuildDemotions(firstResult.Entries, extensions),
                 warnings);
+        }
+
+        private static bool PathListsEqual(IEnumerable<PathEntry> a, IEnumerable<PathEntry> b)
+        {
+            return SafePath(a).SequenceEqual(SafePath(b), PathEntryComparers.SymbolicPath);
         }
 
         private static PathMigrationSimulationMode ToSimulationMode(AutoSortPlannerMode mode)
@@ -167,29 +216,50 @@ namespace WindowsPathEditor
         }
 
         /// <summary>
-        /// Returns the set of ORIGINAL System PATH symbolic paths that are currently acting as
-        /// winners over higher-version User PATH files.  These are demoted to User PATH in pass 2
-        /// so the higher-version user files can win their conflicts.
+        /// Returns the set of post-simulation System PATH symbolic paths that are winning
+        /// over higher-version files that remain in User PATH after pass 1.  These are
+        /// demoted to User PATH in pass 2 so the higher-version user files can win.
+        ///
+        /// The analysis runs on the SIMULATED path (not the original) so that entries
+        /// promoted in pass 1 (e.g. Zulu, Java) are already in System PATH and produce
+        /// System-vs-System conflicts — which are a reorder problem, not a demotion problem.
+        /// Only entries where the highest-version file lives in a genuinely User PATH column
+        /// are flagged for demotion.
         /// </summary>
         private static HashSet<string> FindSystemDemotionCandidates(
             PathMigrationSimulationResult pass1,
             IList<string> extensions)
         {
-            // Check the original path — we want to catch entries already in System PATH
-            // (possibly from a previous Auto Sort apply) that are shadowing user files.
             var report = PathConflictAnalyzer.BuildReport(
-                pass1.OriginalSystemPath.Concat(pass1.OriginalUserPath),
+                pass1.SimulatedSystemPath.Concat(pass1.SimulatedUserPath),
                 extensions,
-                pass1.OriginalSystemPath.Count);
+                pass1.SimulatedSystemPath.Count);
 
             var keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var group in report.Groups)
             {
-                var hasShadowed = group.Rows.Any(r => r.WinnerState == PathConflictWinnerState.ShadowedByHigherVersion);
-                if (!hasShadowed) continue;
-
+                // Winner must be a pure System PATH entry.
                 var winner = group.Columns.OrderBy(c => c.PathIndex).First();
                 if (winner.Origin != PathConflictColumnOrigin.System) continue;
+
+                var winnerColumnIndex = group.Columns.IndexOf(winner);
+
+                // Only demote when the highest-version cell belongs to a User PATH column.
+                // System-vs-System version differences are a reorder problem, not demotion.
+                var hasShadowedByUser = group.Rows.Any(r =>
+                {
+                    if (r.WinnerState != PathConflictWinnerState.ShadowedByHigherVersion) return false;
+                    for (var i = 0; i < r.Cells.Count && i < group.Columns.Count; i++)
+                    {
+                        if (i == winnerColumnIndex) continue;
+                        if (r.Cells[i].IsHighestVersion &&
+                            group.Columns[i].Origin != PathConflictColumnOrigin.System)
+                            return true;
+                    }
+                    return false;
+                });
+
+                if (!hasShadowedByUser) continue;
 
                 keys.Add(winner.Path != null ? winner.Path.SymbolicPath ?? "" : "");
             }
