@@ -51,7 +51,7 @@ namespace WindowsPathEditor
         {
             get
             {
-                var count = Report == null ? 0 : Report.Groups.Count;
+                var count = Report == null ? 0 : Report.ActionableGroups.Count;
                 return string.Format(
                     "{0} conflict group{1}",
                     count,
@@ -62,7 +62,7 @@ namespace WindowsPathEditor
         private void OnReportChanged()
         {
             NotifyPropertyChanged("GroupSummary");
-            SelectedGroup = Report.Groups.FirstOrDefault();
+            SelectedGroup = Report.ActionableGroups.FirstOrDefault();
         }
 
         private void RebuildGridColumns()
@@ -82,6 +82,8 @@ namespace WindowsPathEditor
             {
                 return;
             }
+
+            groupGrid.RowStyle = BuildRowStyle();
 
             groupGrid.Columns.Add(new DataGridTextColumn
             {
@@ -158,6 +160,13 @@ namespace WindowsPathEditor
             AddStateTrigger(style, PathConflictWinnerState.Preferred, (Brush)FindResource("AddedRowBrush"));
             AddStateTrigger(style, PathConflictWinnerState.ShadowedByHigherVersion, (Brush)FindResource("WarningRowBrush"));
 
+            return style;
+        }
+
+        private Style BuildRowStyle()
+        {
+            var style = new Style(typeof(DataGridRow));
+            style.Setters.Add(new Setter(FrameworkElement.ToolTipProperty, new Binding("WinnerSummary")));
             return style;
         }
 

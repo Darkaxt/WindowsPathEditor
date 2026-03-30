@@ -47,7 +47,7 @@
 
                     <ListBox Grid.Row="1"
                              BorderThickness="0"
-                             ItemsSource="{Binding Report.Groups}"
+                             ItemsSource="{Binding Report.ActionableGroups}"
                              SelectedItem="{Binding SelectedGroup, Mode=TwoWay}">
                         <ListBox.ItemTemplate>
                             <DataTemplate>

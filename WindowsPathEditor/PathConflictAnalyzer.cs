@@ -271,6 +271,15 @@ namespace WindowsPathEditor
                 winnerState = PathConflictWinnerState.Preferred;
                 winnerSummary = "The current PATH winner already has the highest known file version.";
             }
+            else if (!cells[0].HasComparableVersion)
+            {
+                // The winner has a version string but no parseable numeric version.
+                // Later entries have higher comparable versions, but we cannot confirm
+                // the winner is actually lower — classify as Unknown rather than flagging
+                // a false positive version inversion.
+                winnerState = PathConflictWinnerState.Unknown;
+                winnerSummary = "The current PATH winner has no numeric file version; the comparison against later entries may be unreliable.";
+            }
             else
             {
                 winnerState = PathConflictWinnerState.ShadowedByHigherVersion;
@@ -359,18 +368,31 @@ namespace WindowsPathEditor
             {
                 var info = FileVersionInfo.GetVersionInfo(fullPath);
                 var hasNumericVersion = info.FileMajorPart != 0 || info.FileMinorPart != 0 || info.FileBuildPart != 0 || info.FilePrivatePart != 0;
+
                 var numericVersion = hasNumericVersion
                     ? new Version(info.FileMajorPart, info.FileMinorPart, info.FileBuildPart, info.FilePrivatePart)
                     : null;
 
+                // Always attempt a string parse alongside the numeric parts.  Some DLLs have
+                // partially-filled FIXEDFILEINFO (e.g. FileMajorPart=0 while FileBuildPart=26100),
+                // which produces a misleadingly low numeric version while the FileVersion string
+                // contains the correct human-readable value.  Taking the higher of the two ensures
+                // a half-zeroed FIXEDFILEINFO never shadows the string-derived version.
+                var stringVersion = TryParseVersionFromFileVersionString(info.FileVersion);
+                Version comparableVersion;
+                if (numericVersion != null && stringVersion != null)
+                    comparableVersion = numericVersion.CompareTo(stringVersion) >= 0 ? numericVersion : stringVersion;
+                else
+                    comparableVersion = numericVersion ?? stringVersion;
+
                 if (!string.IsNullOrEmpty(info.FileVersion))
                 {
-                    return new PathConflictVersionInfo(info.FileVersion, numericVersion != null, numericVersion);
+                    return new PathConflictVersionInfo(info.FileVersion, comparableVersion != null, comparableVersion);
                 }
 
-                if (numericVersion != null)
+                if (comparableVersion != null)
                 {
-                    return new PathConflictVersionInfo(numericVersion.ToString(), true, numericVersion);
+                    return new PathConflictVersionInfo(comparableVersion.ToString(), true, comparableVersion);
                 }
             }
             catch (Exception ex)
@@ -379,6 +401,22 @@ namespace WindowsPathEditor
             }
 
             return new PathConflictVersionInfo("n/a", false, null);
+        }
+
+        /// <summary>
+        /// Extracts a <see cref="Version"/> from the leading token of a FileVersion string such as
+        /// "10.0.26100.1 (WinBuild.160101.0800)".  Returns null if the string cannot be parsed.
+        /// </summary>
+        private static Version TryParseVersionFromFileVersionString(string fileVersion)
+        {
+            if (string.IsNullOrEmpty(fileVersion))
+            {
+                return null;
+            }
+
+            var token = fileVersion.Split(new[] { ' ', '\t' }, 2, StringSplitOptions.RemoveEmptyEntries)[0];
+            Version version;
+            return Version.TryParse(token, out version) ? version : null;
         }
     }
 }

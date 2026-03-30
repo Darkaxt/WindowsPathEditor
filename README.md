@@ -5,7 +5,7 @@ A Windows PATH manager with drag-and-drop reordering, conflict detection, and
 automatic cleanup — now with a grouped conflict viewer, auto-sort, and
 registry backup on every save.
 
-[Download Latest Version (1.8)](https://github.com/Darkaxt/WindowsPathEditor/releases/download/1.8/windowspatheditor-1.8.zip)
+[Download Latest Version (1.9)](https://github.com/Darkaxt/WindowsPathEditor/releases/download/1.9/windowspatheditor-1.9.zip)
 
 Introduction
 ------------

@@ -203,5 +203,23 @@ namespace WindowsPathEditor
         public PathConflictGraph Graph { get; private set; }
         public bool IsPending { get; private set; }
         public bool HasConflicts { get { return Groups.Count > 0; } }
+
+        /// <summary>
+        /// Groups that contain at least one row where a later PATH entry has a higher file version
+        /// than the entry that actually wins (ShadowedByHigherVersion).  Groups where the winner
+        /// already carries the highest version (Preferred) are excluded — those name collisions
+        /// resolve correctly and do not need user attention.
+        /// </summary>
+        public IList<PathConflictGroup> ActionableGroups
+        {
+            get
+            {
+                return Groups
+                    .Where(g => g.Rows.Any(r => r.WinnerState == PathConflictWinnerState.ShadowedByHigherVersion))
+                    .ToList();
+            }
+        }
+
+        public bool HasActionableConflicts { get { return ActionableGroups.Count > 0; } }
     }
 }

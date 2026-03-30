@@ -3,7 +3,8 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:wpe="clr-namespace:WindowsPathEditor"
         xmlns:dd="clr-namespace:DragDropListBox"
-        Title="Windows Path Editor" Height="510" Width="630"
+        Title="Windows Path Editor" Height="580" Width="1020"
+        MinHeight="420" MinWidth="800"
         DataContext="{Binding RelativeSource={RelativeSource Self}}"
         Background="{StaticResource WindowBackgroundBrush}"
         WindowStartupLocation="CenterScreen"
@@ -47,8 +48,7 @@
         </Grid.ColumnDefinitions>
         <Grid.RowDefinitions>
             <RowDefinition Height="36" />
-            <RowDefinition Height="2*" />
-            <RowDefinition Height="1*" />
+            <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
@@ -60,59 +60,63 @@
                                  x:Name="searchBox" />
         </StackPanel>
 
-        <!-- System Path -->
-        <GroupBox Header="System Path"
-                  Grid.Row="1"
-                  HorizontalAlignment="Stretch"
-                  VerticalAlignment="Stretch"
-                  Margin="0,0,0,6">
-            <wpe:DirectoryList ItemsSource="{Binding Path=SystemPath}"
-                               dd:DragDropHelper.IsDropTarget="True"
-                               dd:DragDropHelper.IsDragSource="True"
-                               dd:DragDropHelper.ExternalDropConverter="{Binding FileDropConverter}"
-                               ContextMenu="{DynamicResource ContextMenu}"
-                               x:Name="systemList">
-                <wpe:DirectoryList.InputBindings>
-                    <KeyBinding Key="Delete" Command="Delete" />
-                    <KeyBinding Key="O" Modifiers="Ctrl" Command="Open" />
-                </wpe:DirectoryList.InputBindings>
-            </wpe:DirectoryList>
-        </GroupBox>
+        <!-- System + User lists side by side -->
+        <Grid Grid.Row="1" Grid.Column="0" Margin="0,0,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="6" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
 
-        <GridSplitter Grid.Row="1"
+            <GroupBox Grid.Column="0" Header="System Path"
                       HorizontalAlignment="Stretch"
-                      ResizeDirection="Rows"
-                      Height="6"
-                      VerticalAlignment="Bottom"
-                      Background="{StaticResource WindowBackgroundBrush}" />
+                      VerticalAlignment="Stretch">
+                <wpe:DirectoryList ItemsSource="{Binding Path=SystemPath}"
+                                   dd:DragDropHelper.IsDropTarget="True"
+                                   dd:DragDropHelper.IsDragSource="True"
+                                   dd:DragDropHelper.ExternalDropConverter="{Binding FileDropConverter}"
+                                   ContextMenu="{DynamicResource ContextMenu}"
+                                   x:Name="systemList">
+                    <wpe:DirectoryList.InputBindings>
+                        <KeyBinding Key="Delete" Command="Delete" />
+                        <KeyBinding Key="O" Modifiers="Ctrl" Command="Open" />
+                    </wpe:DirectoryList.InputBindings>
+                </wpe:DirectoryList>
+            </GroupBox>
 
-        <!-- User Path -->
-        <GroupBox Header="User Path"
-                  Grid.Row="2"
-                  HorizontalAlignment="Stretch"
-                  VerticalAlignment="Stretch">
-            <wpe:DirectoryList ItemsSource="{Binding Path=UserPath}"
-                               dd:DragDropHelper.IsDropTarget="True"
-                               dd:DragDropHelper.IsDragSource="True"
-                               dd:DragDropHelper.ExternalDropConverter="{Binding FileDropConverter}"
-                               ContextMenu="{DynamicResource ContextMenu}"
-                               x:Name="userList">
-                <wpe:DirectoryList.InputBindings>
-                    <KeyBinding Key="Delete" Command="Delete" />
-                    <KeyBinding Key="O" Modifiers="Ctrl" Command="Open" />
-                </wpe:DirectoryList.InputBindings>
-            </wpe:DirectoryList>
-        </GroupBox>
+            <GridSplitter Grid.Column="1"
+                          HorizontalAlignment="Center"
+                          VerticalAlignment="Stretch"
+                          Width="6"
+                          ResizeDirection="Columns"
+                          Background="{StaticResource WindowBackgroundBrush}" />
+
+            <GroupBox Grid.Column="2" Header="User Path"
+                      HorizontalAlignment="Stretch"
+                      VerticalAlignment="Stretch">
+                <wpe:DirectoryList ItemsSource="{Binding Path=UserPath}"
+                                   dd:DragDropHelper.IsDropTarget="True"
+                                   dd:DragDropHelper.IsDragSource="True"
+                                   dd:DragDropHelper.ExternalDropConverter="{Binding FileDropConverter}"
+                                   ContextMenu="{DynamicResource ContextMenu}"
+                                   x:Name="userList">
+                    <wpe:DirectoryList.InputBindings>
+                        <KeyBinding Key="Delete" Command="Delete" />
+                        <KeyBinding Key="O" Modifiers="Ctrl" Command="Open" />
+                    </wpe:DirectoryList.InputBindings>
+                </wpe:DirectoryList>
+            </GroupBox>
+        </Grid>
 
         <!-- Footer hint -->
-        <TextBlock Grid.Row="3" Grid.Column="0"
+        <TextBlock Grid.Row="2" Grid.Column="0"
                    Text="Drag entries between lists to change search order."
                    Foreground="{StaticResource TextSecondaryBrush}"
                    FontSize="{StaticResource FontSizeSmall}"
                    Margin="0,4,0,0" />
 
         <!-- Action buttons column -->
-        <StackPanel Grid.Column="1" Grid.RowSpan="4"
+        <StackPanel Grid.Column="1" Grid.RowSpan="3"
                     Margin="8,0,0,0"
                     VerticalAlignment="Top">
 

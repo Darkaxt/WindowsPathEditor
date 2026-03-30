@@ -29,12 +29,28 @@ namespace WindowsPathEditor
         }
 
         /// <summary>
+        /// The raw System PATH registry value.
+        /// </summary>
+        public string RawSystemPath
+        {
+            get { return ReadRawFromRegistry(Registry.LocalMachine, SystemEnvironmentKey); }
+        }
+
+        /// <summary>
         /// Access the User Path
         /// </summary>
         public IEnumerable<PathEntry> UserPath
         {
             get { return ReadPathFromRegistry(Registry.CurrentUser, UserEnvironmentKey); }
             set { WritePathToRegistry(Registry.CurrentUser, UserEnvironmentKey, value); }
+        }
+
+        /// <summary>
+        /// The raw User PATH registry value.
+        /// </summary>
+        public string RawUserPath
+        {
+            get { return ReadRawFromRegistry(Registry.CurrentUser, UserEnvironmentKey); }
         }
 
         /// <summary>
@@ -81,6 +97,16 @@ namespace WindowsPathEditor
             return ReadMultipleFromRegistry(rootKey, key, "Path").Select(_ => new PathEntry(_));
         }
 
+        private string ReadRawFromRegistry(RegistryKey rootKey, string key)
+        {
+            using (var k = rootKey.OpenSubKey(key, false))
+            {
+                if (k == null) return null;
+
+                return k.GetValue("Path", null, RegistryValueOptions.DoNotExpandEnvironmentNames) as string;
+            }
+        }
+
         private IEnumerable<string> ReadMultipleFromRegistry(RegistryKey rootKey, string key, string value)
         {
             using (var k = rootKey.OpenSubKey(key, false))
@@ -118,7 +144,7 @@ namespace WindowsPathEditor
                 var reg = string.Join(";", path.Select(_ => _.SymbolicPath));
                 k.SetValue("Path", reg, RegistryValueKind.ExpandString);
             }
-            KickExplorer();
+            NotifyEnvironmentChange();
         }
 
         /// <summary>
@@ -128,6 +154,11 @@ namespace WindowsPathEditor
         /// Explorer caches the environment vars internally. Without this signal,
         /// they won't get reread from the registry.
         /// </remarks>
+        internal static void NotifyEnvironmentChange()
+        {
+            KickExplorer();
+        }
+
         private static void KickExplorer() 
         {
             UIntPtr retVal;
