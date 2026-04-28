@@ -357,35 +357,6 @@ namespace WindowsPathEditor
 
         private void AutoSort_Click(object sender, RoutedEventArgs e)
         {
-            lock (stateLock)
-            {
-                var previousSystem = SystemPath.Select(_ => _.Path).ToList();
-                var previousUser = UserPath.Select(_ => _.Path).ToList();
-
-                var sortedSystem = checker.SuggestBestOrder(previousSystem).ToList();
-                var sortedUser = checker.SuggestBestOrder(previousUser).ToList();
-
-                if (PathListEqual(previousSystem, sortedSystem) && PathListEqual(previousUser, sortedUser))
-                {
-                    MessageBox.Show(
-                        "The current order already appears optimal for DLL conflict resolution.",
-                        "Auto Sort",
-                        MessageBoxButton.OK,
-                        MessageBoxImage.Information);
-                    return;
-                }
-
-                SetPaths(sortedSystem, sortedUser);
-                MessageBox.Show(
-                    "Applied suggested order based on DLL version winners.",
-                    "Auto Sort",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Information);
-            }
-        }
-
-        private void AutoSort_Click(object sender, RoutedEventArgs e)
-        {
             List<PathEntry> previousSystem;
             List<PathEntry> previousUser;
 
