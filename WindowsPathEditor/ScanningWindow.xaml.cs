@@ -71,6 +71,7 @@ namespace WindowsPathEditor
             progressBar1.Maximum = 1;
             progressBar1.Value = 1;
             currentDirectory.Content = "";
+            addButton.IsEnabled = true;
         }
 
         public void FoundCandidate(string path)

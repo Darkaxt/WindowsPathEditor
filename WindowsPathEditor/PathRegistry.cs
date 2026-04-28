@@ -29,6 +29,14 @@ namespace WindowsPathEditor
         }
 
         /// <summary>
+        /// The raw System PATH registry value.
+        /// </summary>
+        public string RawSystemPath
+        {
+            get { return ReadRawFromRegistry(Registry.LocalMachine, SystemEnvironmentKey); }
+        }
+
+        /// <summary>
         /// Access the User Path
         /// </summary>
         public IEnumerable<PathEntry> UserPath
@@ -38,13 +46,22 @@ namespace WindowsPathEditor
         }
 
         /// <summary>
+        /// The raw User PATH registry value.
+        /// </summary>
+        public string RawUserPath
+        {
+            get { return ReadRawFromRegistry(Registry.CurrentUser, UserEnvironmentKey); }
+        }
+
+        /// <summary>
         /// Return a list of all command-line executable extensions 
         /// </summary>
         public IEnumerable<String> ExecutableExtensions
         {
             get {
-                return ReadMultipleFromRegistry(Registry.LocalMachine, SystemEnvironmentKey, "PathExt").Concat(
-                    ReadMultipleFromRegistry(Registry.CurrentUser, SystemEnvironmentKey, "PathExt"));
+                return MergeExecutableExtensions(
+                    ReadMultipleFromRegistry(Registry.LocalMachine, SystemEnvironmentKey, "PathExt"),
+                    ReadMultipleFromRegistry(Registry.CurrentUser, UserEnvironmentKey, "PathExt"));
             }
         }
 
@@ -80,6 +97,16 @@ namespace WindowsPathEditor
             return ReadMultipleFromRegistry(rootKey, key, "Path").Select(_ => new PathEntry(_));
         }
 
+        private string ReadRawFromRegistry(RegistryKey rootKey, string key)
+        {
+            using (var k = rootKey.OpenSubKey(key, false))
+            {
+                if (k == null) return null;
+
+                return k.GetValue("Path", null, RegistryValueOptions.DoNotExpandEnvironmentNames) as string;
+            }
+        }
+
         private IEnumerable<string> ReadMultipleFromRegistry(RegistryKey rootKey, string key, string value)
         {
             using (var k = rootKey.OpenSubKey(key, false))
@@ -93,6 +120,23 @@ namespace WindowsPathEditor
             }
         }
 
+        internal static IEnumerable<string> MergeExecutableExtensions(IEnumerable<string> systemExtensions, IEnumerable<string> userExtensions)
+        {
+            var merged = new List<string>();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var extension in systemExtensions.Concat(userExtensions))
+            {
+                if (!seen.Add(extension))
+                {
+                    continue;
+                }
+
+                merged.Add(extension);
+            }
+
+            return merged;
+        }
+
         private void WritePathToRegistry(RegistryKey rootKey, string key, IEnumerable<PathEntry> path)
         {
             using (var k = rootKey.OpenSubKey(key, true))
@@ -100,7 +144,7 @@ namespace WindowsPathEditor
                 var reg = string.Join(";", path.Select(_ => _.SymbolicPath));
                 k.SetValue("Path", reg, RegistryValueKind.ExpandString);
             }
-            KickExplorer();
+            NotifyEnvironmentChange();
         }
 
         /// <summary>
@@ -110,6 +154,11 @@ namespace WindowsPathEditor
         /// Explorer caches the environment vars internally. Without this signal,
         /// they won't get reread from the registry.
         /// </remarks>
+        internal static void NotifyEnvironmentChange()
+        {
+            KickExplorer();
+        }
+
         private static void KickExplorer() 
         {
             UIntPtr retVal;

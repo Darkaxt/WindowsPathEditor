@@ -48,6 +48,7 @@
     <Reference Include="System.Reactive.Windows.Threading">
       <HintPath>..\packages\Rx-WPF.1.0.11226\lib\Net4\System.Reactive.Windows.Threading.dll</HintPath>
     </Reference>
+    <Reference Include="System.Runtime.Serialization" />
     <Reference Include="System.Windows.Forms" />
     <Reference Include="System.Xml" />
     <Reference Include="Microsoft.CSharp" />
@@ -67,8 +68,17 @@
       <SubType>Designer</SubType>
     </ApplicationDefinition>
     <Compile Include="AnnotatedPathEntry.cs" />
+    <Compile Include="AutoSortPlan.cs" />
+    <Compile Include="AutoSortPlanner.cs" />
+    <Compile Include="AutoSortPreviewService.cs" />
+    <Compile Include="AutoSortPreviewWindow.xaml.cs">
+      <DependentUpon>AutoSortPreviewWindow.xaml</DependentUpon>
+    </Compile>
     <Compile Include="AutoCompleteBox.xaml.cs">
       <DependentUpon>AutoCompleteBox.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="ConflictWindow.xaml.cs">
+      <DependentUpon>ConflictWindow.xaml</DependentUpon>
     </Compile>
     <Compile Include="DiffPath.cs" />
     <Compile Include="DiffWindow.xaml.cs">
@@ -79,8 +89,27 @@
     </Compile>
     <Compile Include="InvertBooleanConverter.cs" />
     <Compile Include="IReportProgress.cs" />
+    <Compile Include="CliCommandLine.cs" />
+    <Compile Include="CliConsoleHost.cs" />
+    <Compile Include="CliInputSnapshot.cs" />
+    <Compile Include="CliJsonFormatter.cs" />
+    <Compile Include="CliPathSource.cs" />
+    <Compile Include="CliPayloads.cs" />
+    <Compile Include="CliNullProgressReporter.cs" />
+    <Compile Include="CliRunner.cs" />
+    <Compile Include="CliTextFormatter.cs" />
+    <Compile Include="CommandLinePathWrite.cs" />
     <Compile Include="ObservableCollectionEx.cs" />
+    <Compile Include="PathCleanup.cs" />
     <Compile Include="PathChecker.cs" />
+    <Compile Include="PathConflictAnalyzer.cs" />
+    <Compile Include="PathConflictReport.cs" />
+    <Compile Include="PathMigrationSimulator.cs" />
+    <Compile Include="PathApplyService.cs" />
+    <Compile Include="PathBackupExporter.cs" />
+    <Compile Include="PathEntryComparers.cs" />
+    <Compile Include="PathResolution.cs" />
+    <Compile Include="RegistryImportRunner.cs" />
     <Compile Include="DragDropListBox\DragDropHelper.cs" />
     <Compile Include="DragDropListBox\DraggedAdorner.cs" />
     <Compile Include="DragDropListBox\InsertionAdorner.cs" />
@@ -90,10 +119,19 @@
       <DependentUpon>ScanningWindow.xaml</DependentUpon>
     </Compile>
     <Compile Include="SearchOperation.cs" />
+    <Compile Include="ScanImportPlanner.cs" />
     <Compile Include="SelectablePath.cs" />
     <Compile Include="UAC.cs" />
     <Compile Include="ValueConverterGroup.cs" />
     <Page Include="AutoCompleteBox.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <Page Include="AutoSortPreviewWindow.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <Page Include="ConflictWindow.xaml">
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>
     </Page>
@@ -122,6 +160,10 @@
       <SubType>Code</SubType>
     </Compile>
     <Page Include="ScanningWindow.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <Page Include="Resources\Theme.xaml">
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>
     </Page>

@@ -1,12 +1,14 @@
 Windows Path Editor
 ===================
 
-This tool helps you manage your PATH on Windows.
+A Windows PATH manager with drag-and-drop reordering, conflict detection, and
+automatic cleanup — now with a grouped conflict viewer, migration-aware
+auto-sort, bin crawling, and registry backup on every save.
 
-[Download Latest Version (1.7)](https://github.com/rix0rrr/WindowsPathEditor/releases/download/1.7/windowspatheditor-1.7.zip)
+[Download Latest Version (1.10)](https://github.com/Darkaxt/WindowsPathEditor/releases/download/1.10/windowspatheditor-1.10.zip)
 
 Introduction
------------
+------------
 
 In a fit of horrible irony, on Windows you'll both have the most need to edit
 your PATH (since all applications insist on creating their own `bin`
@@ -15,18 +17,56 @@ and you're also equipped with the absolute worst tools to deal with this. The
 default environment editor dialog where you get to see 30 characters at once if
 you're lucky? Yuck.
 
-*Windows Path Editor* (a horribly creative name, I know) gives you a
-better overview and easier ways to manipulate your path settings.
+*Windows Path Editor* gives you a better overview and easier ways to manage
+your PATH settings, covering both the System and User PATH side by side.
 
 Features
------------
+--------
 
-- Edit your path using drag and drop.
-- Detect conflicts between directories on your path (diagnose issues like the
-  wrong executable being launched or the wrong DLL being loaded).
-- Remove bogus entries from your path with a single click.
-- Scan your disk for tools that have a `bin` directory and automatically add
-  them to your path.
-- UAC aware.
+- **Drag and drop** — reorder entries within and between the System and User
+  PATH lists.
+- **Live validation** — entries are checked in the background; missing paths
+  are shown in red with strikethrough, conflicting ones in orange, while a
+  pending indicator shows when a check is still in flight.
+- **Grouped conflict viewer** — conflicting DLL and EXE files are grouped by
+  the exact set of PATH locations that share them. Each group shows a
+  per-file version matrix with the runtime winner and highest-version copy
+  highlighted. Column headers carry colour-coded SYSTEM / USER / MIXED origin
+  badges, and the main PATH lists mark conflict rows as winning, losing, or
+  mixed.
+- **Auto Sort** — suggests a migration-aware reordering that minimizes DLL
+  shadowing by higher-version copies, demotes misplaced user paths out of the
+  System PATH, cleans broken or duplicate entries in the same preview, and
+  alphabetizes neutral paths without disturbing real conflict anchors.
+- **Clean Up** — removes non-existent entries and exact duplicates in one
+  click.
+- **Bin Crawler** — searches `C:\` for `bin` directories and lets you
+  cherry-pick which ones to add.
+- **Registry backup** — writes a `.reg` rollback file beside the executable
+  before every save, so you always have an emergency restore point.
+- **UAC aware** — edits to the System PATH trigger a UAC elevation prompt;
+  User PATH changes save silently.
 
-![Screen Shot of Windows Path Editor](https://raw.github.com/rix0rrr/WindowsPathEditor/master/screenshot.png)
+![Screen Shot of Windows Path Editor](./screenshot.png)
+
+Building from source
+--------------------
+
+Requirements: Visual Studio 2019 or later (or the MSBuild CLI), targeting
+.NET 4.0 Client Profile (x86).
+
+```
+MSBuild WindowsPathEditor.sln /restore /p:Configuration=Release /p:Platform=x86
+```
+
+The test suite targets net48 and uses MSTest:
+
+```
+vstest.console.exe WindowsPathEditor.Tests\bin\x86\Release\net48\WindowsPathEditor.Tests.dll
+```
+
+Credits
+-------
+
+Originally created by [rix0rrr](https://github.com/rix0rrr/WindowsPathEditor).
+Extended by [Darkaxt](https://github.com/Darkaxt/WindowsPathEditor).

@@ -4,3 +4,9 @@ Release
 *.suo
 *.sdf
 packages
+superpowers
+.claude/
+docs/superpowers/specs/
+obj/
+bin/
+TestResults/

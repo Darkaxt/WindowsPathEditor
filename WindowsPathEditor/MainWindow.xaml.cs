@@ -41,39 +41,12 @@ namespace WindowsPathEditor
             ShieldIcon = UAC.GetShieldIcon();
             searchBox.SetCompleteProvider(checker.Search);
 
-            var args = Environment.GetCommandLineArgs();
-            if (args.Count() > 1)
-            {
-                WriteChangesFromCommandLine(args.Skip(1));
-                Close();
-            }
-            else
-                Read();
+            Read();
         }
 
         private void Window_Closed(object sender, EventArgs e)
         {
             checker.Dispose();
-        }
-
-        /// <summary>
-        /// Write the changes passed on the command-line (used for writing with UAC elevation)
-        /// </summary>
-        private void WriteChangesFromCommandLine(IEnumerable<string> args)
-        {
-            for (int i = 0; i < args.Count(); i++)
-            {
-                if (args.ElementAt(i).ToLower() == "/system")
-                {
-                    reg.SystemPath = ParseCommandLinePath(args.ElementAt(i + 1));
-                    i++;
-                }
-                if (args.ElementAt(i).ToLower() == "/user")
-                {
-                    reg.UserPath = ParseCommandLinePath(args.ElementAt(i + 1));
-                    i++;
-                }
-            }
         }
 
         private void Read()
@@ -115,6 +88,7 @@ namespace WindowsPathEditor
         private void DirtyPaths()
         {
             pathsDirty = true;
+            CompletePath.Each(_ => _.BeginValidation());
             InvalidateDependentProperties();
             Dispatcher.BeginInvoke((Action)RecheckPath);
         }
@@ -124,20 +98,54 @@ namespace WindowsPathEditor
             if (pathsDirty)
             {
                 pathsDirty = false;
-                checker.Check(CompletePath);
+                checker.Check(CompletePath, SystemPath.Count);
             }
         }
 
         private void Write()
         {
-            string args = "";
-            if (SystemPathChanged) args += "/system " + PathAsCommandLineArgument(SystemPath);
-            if (UserPathChanged) args += " /user " + PathAsCommandLineArgument(UserPath);
+            var current = new PathStateSnapshot(reg.SystemPath.ToList(), reg.UserPath.ToList());
+            var expected = new PathStateSnapshot(
+                SystemPath.Select(_ => _.Path).ToList(),
+                UserPath.Select(_ => _.Path).ToList());
+            var result = new PathApplyService().Apply(current, expected, NeedsElevation);
 
-            if (!UAC.Relaunch(args, NeedsElevation))
-                MessageBox.Show("The changes were NOT saved!", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
-            else
-                Read();
+            if (!result.Succeeded)
+            {
+                var details = new StringBuilder();
+                details.AppendLine("The changes were NOT saved.");
+
+                if (!string.IsNullOrEmpty(result.ErrorMessage))
+                {
+                    details.AppendLine();
+                    details.AppendLine(result.ErrorMessage);
+                }
+
+                if (!string.IsNullOrEmpty(result.BackupPath))
+                {
+                    details.AppendLine();
+                    details.AppendLine("Rollback backup:");
+                    details.AppendLine(result.BackupPath);
+                }
+
+                MessageBox.Show(
+                    details.ToString(),
+                    "Error",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+                return;
+            }
+
+            Read();
+
+            if (!string.IsNullOrEmpty(result.WarningMessage))
+            {
+                MessageBox.Show(
+                    result.WarningMessage,
+                    "PATH Saved With Warning",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+            }
         }
 
         /// <summary>
@@ -218,12 +226,12 @@ namespace WindowsPathEditor
         /// </summary>
         private bool PathListEqual(IEnumerable<PathEntry> original, ObservableCollectionEx<AnnotatedPathEntry> edited)
         {
-            return original.Count() == edited.Count() && original.Zip(edited, (a, b) => a.SymbolicPath == b.SymbolicPath).All(_ => _);
+            return PathListEqual(original, edited.Select(_ => _.Path));
         }
 
         private static bool PathListEqual(IEnumerable<PathEntry> left, IEnumerable<PathEntry> right)
         {
-            return left.Count() == right.Count() && left.Zip(right, (a, b) => a.SymbolicPath == b.SymbolicPath).All(_ => _);
+            return left.SequenceEqual(right, PathEntryComparers.SymbolicPath);
         }
 
         /// <summary>
@@ -233,14 +241,8 @@ namespace WindowsPathEditor
         {
             lock (stateLock)
             {
-                var sp = SystemPath.Select(_ => _.Path);
-                var up = UserPath.Select(_ => _.Path);
-                var cp = sp.Concat(up);
-
-                var s = sp.Where((p, index) => p.Exists && !sp.Take(index).Contains(p));
-                var u = up.Where((p, index) => p.Exists && !cp.Take(sp.Count() + index).Contains(p));
-
-                SetPaths(s, u);
+                var cleaned = PathCleanup.Clean(SystemPath.Select(_ => _.Path), UserPath.Select(_ => _.Path));
+                SetPaths(cleaned.SystemPath, cleaned.UserPath);
             }
         }
 
@@ -278,7 +280,9 @@ namespace WindowsPathEditor
 
         private void DoExplore(object sender, ExecutedRoutedEventArgs e)
         {
-            Process.Start("explorer.exe", "/e," + GetSelectedEntry(e).Path.ActualPath);
+            PathResolution resolution;
+            if (!GetSelectedEntry(e).Path.TryResolve(out resolution)) return;
+            Process.Start("explorer.exe", "/e," + resolution.ActualPath);
         }
 
         private void CanExplore(object sender, CanExecuteRoutedEventArgs e)
@@ -286,7 +290,9 @@ namespace WindowsPathEditor
             e.CanExecute = false;
             try
             {
-                e.CanExecute = GetSelectedEntry(e) != null && Directory.Exists(GetSelectedEntry(e).Path.ActualPathForAccess);
+                var selected = GetSelectedEntry(e);
+                PathResolution resolution;
+                e.CanExecute = selected != null && selected.Path.TryResolve(out resolution) && Directory.Exists(resolution.ActualPathForAccess);
             }
             catch (Exception ex)
             {
@@ -305,19 +311,6 @@ namespace WindowsPathEditor
             e.CanExecute = GetSelectedEntry(e) != null;
         }
 
-        private string PathAsCommandLineArgument(IEnumerable<AnnotatedPathEntry> path)
-        {
-            string arg = string.Join(";", path);
-            if (arg.Contains("\""))
-                throw new InvalidDataException("Error saving: path string contains \" character");
-            return "\"" + arg + "\"";
-        }
-
-        private IEnumerable<PathEntry> ParseCommandLinePath(string argument)
-        {
-            return argument.Split(';').Select(path => new PathEntry(path));
-        }
-
         public event PropertyChangedEventHandler PropertyChanged;
 
         private void DoSave(object sender, ExecutedRoutedEventArgs e)
@@ -327,8 +320,8 @@ namespace WindowsPathEditor
                 var window = new DiffWindow();
                 List<PathEntry> newPaths = new List<PathEntry>(SystemPath.Concat(UserPath).Select(_ => _.Path));
                 List<PathEntry> oldPaths = new List<PathEntry>(reg.SystemPath.Concat(reg.UserPath));
-                foreach (var x in new ObservableCollection<DiffPath>(newPaths.Except(oldPaths).Select(p => new DiffPath(p, true)).Concat(
-                                oldPaths.Except(newPaths).Select(p => new DiffPath(p, false)))))
+                foreach (var x in new ObservableCollection<DiffPath>(newPaths.Except(oldPaths, PathEntryComparers.SymbolicPath).Select(p => new DiffPath(p, true)).Concat(
+                                oldPaths.Except(newPaths, PathEntryComparers.SymbolicPath).Select(p => new DiffPath(p, false)))))
                 {
                     window.Changes.Add(x);
                 }
@@ -356,9 +349,7 @@ namespace WindowsPathEditor
             if (window.ShowDialog() == true)
             {
                 UserPath.SupressNotification = true;
-                search.Result
-                    .Select(PathEntry.FromFilePath)
-                    .Where(path => !currentPaths.Contains(path))
+                ScanImportPlanner.SelectPathsToImport(window.Paths, currentPaths)
                     .Each(path => UserPath.Add(new AnnotatedPathEntry(path)));
                 UserPath.SupressNotification = false;
             }
@@ -393,6 +384,88 @@ namespace WindowsPathEditor
             }
         }
 
+        private void AutoSort_Click(object sender, RoutedEventArgs e)
+        {
+            List<PathEntry> previousSystem;
+            List<PathEntry> previousUser;
+
+            lock (stateLock)
+            {
+                previousSystem = SystemPath.Select(_ => _.Path).ToList();
+                previousUser = UserPath.Select(_ => _.Path).ToList();
+            }
+
+            // Capture off-thread inputs before leaving the UI thread
+            var extensions = reg.ExecutableExtensions.ToList();
+            var policy = PathMigrationPolicy.CreateDefault();
+            var uiScheduler = TaskScheduler.FromCurrentSynchronizationContext();
+
+            Mouse.OverrideCursor = Cursors.Wait;
+
+            Task.Factory.StartNew(() =>
+                AutoSortPlanner.Build(
+                    previousSystem,
+                    previousUser,
+                    extensions,
+                    policy,
+                    AutoSortPlannerMode.AggressivePromotion)
+            ).ContinueWith(task =>
+            {
+                Mouse.OverrideCursor = null;
+
+                if (task.IsFaulted)
+                {
+                    var message = task.Exception != null && task.Exception.InnerException != null
+                        ? task.Exception.InnerException.Message
+                        : "An unexpected error occurred.";
+                    MessageBox.Show(
+                        "Auto Sort failed: " + message,
+                        "Auto Sort",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Error);
+                    return;
+                }
+
+                var plan = task.Result;
+
+                if (!plan.HasPreviewContent)
+                {
+                    MessageBox.Show(
+                        "No migration-aware Auto Sort changes or warnings were detected.",
+                        "Auto Sort",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Information);
+                    return;
+                }
+
+                var applyResult = AutoSortPreviewService.ApplyIfConfirmed(
+                    plan,
+                    previewPlan =>
+                    {
+                        var window = new AutoSortPreviewWindow
+                        {
+                            Owner = this,
+                            Plan = previewPlan
+                        };
+                        return window.ShowDialog() == true;
+                    });
+
+                if (!applyResult.Applied)
+                    return;
+
+                lock (stateLock)
+                {
+                    SetPaths(applyResult.SystemPath, applyResult.UserPath);
+                }
+
+                MessageBox.Show(
+                    "Applied migration-aware Auto Sort changes to the editor. Use Save to write them to the registry.",
+                    "Auto Sort",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+            }, uiScheduler);
+        }
+
         private void Add_Click(object sender, RoutedEventArgs e)
         {
             using (var dialog = new FolderBrowserDialogEx())
@@ -405,9 +478,34 @@ namespace WindowsPathEditor
             }
         }
 
-        private void ShowIssues_Checked(object sender, RoutedEventArgs e)
+        private void Conflicts_Click(object sender, RoutedEventArgs e)
         {
+            var report = checker.LatestConflictReport;
+            if (report.IsPending)
+            {
+                MessageBox.Show(
+                    "Conflict analysis is still running. Please try again in a moment.",
+                    "Conflicts",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+                return;
+            }
 
+            if (!report.HasActionableConflicts)
+            {
+                MessageBox.Show(
+                    report.HasConflicts
+                        ? "No version-inversion conflicts were detected.\n\nShared DLL and EXE files exist across multiple PATH locations, but in every case the highest available version already wins."
+                        : "No conflicting DLL or EXE files were detected.",
+                    "Conflicts",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+                return;
+            }
+
+            var window = new ConflictWindow();
+            window.Report = report;
+            window.ShowDialog();
         }
 
         private void Button_Click(object sender, RoutedEventArgs e)
